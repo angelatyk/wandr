@@ -294,7 +294,7 @@ wandr/
 ├── README.md
 ├── .env.example                    # never commit .env
 ├── pyproject.toml
-├── wandr/
+├── ai/
 │   ├── __init__.py
 │   ├── main.py                     # entrypoint, orchestrator bootstrap
 │   │
