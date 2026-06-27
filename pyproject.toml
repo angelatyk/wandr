@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wandr"
+version = "0.1.0"
+description = "AI-powered personalized travel guide with audio narration"
+requires-python = ">=3.10"
+dependencies = [
+    "google-adk",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wandr*"]
