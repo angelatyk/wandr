@@ -61,3 +61,19 @@ outputs/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Frontend Node.js dependencies & builds
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Frontend / Node logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
