@@ -293,8 +293,8 @@ Wraps Google Cloud TTS. Accepts a narration script and voice style (dramatic / e
 wandr/
 ├── README.md
 ├── .env.example                    # never commit .env
-├── pyproject.toml
 ├── ai/
+│   ├── pyproject.toml
 │   ├── __init__.py
 │   ├── main.py                     # entrypoint, orchestrator bootstrap
 │   │

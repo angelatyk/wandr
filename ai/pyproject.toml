@@ -14,5 +14,5 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["ai"]
+where = [".."]
+include = ["ai*"]
