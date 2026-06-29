@@ -33,6 +33,35 @@ class OrchestratorAgent(BaseAgent):
         async for event in profiler_agent.run_async(ctx):
             yield event
 
+        # Log what the profiler determined so the pipeline output is visible during development.
+        # State delta is applied by the runner synchronously as each event is yielded, so
+        # ctx.session.state["persona"] is populated by the time we reach here.
+        persona_dict = ctx.session.state.get("persona")
+        if persona_dict:
+            logger.info(
+                "Profiler determined persona:\n"
+                "  destination   : %s\n"
+                "  duration      : %s\n"
+                "  current_loc   : %s\n"
+                "  type          : %s\n"
+                "  pace          : %s\n"
+                "  budget        : %s\n"
+                "  notes         : %s",
+                persona_dict.get("destination"),
+                persona_dict.get("duration"),
+                persona_dict.get("current_location") or "(none)",
+                persona_dict.get("type"),
+                persona_dict.get("pace"),
+                persona_dict.get("budget"),
+                persona_dict.get("notes") or "(none)",
+            )
+        else:
+            logger.info(
+                "Profiler asked a clarifying question — pipeline paused, "
+                "waiting for user to supply missing information."
+            )
+            return  # stop here; the clarifying question is already yielded above
+
         # 2. Run Itinerary — emits state_delta(itinerary) which runner applies to ctx.session.state
         logger.info("Running Itinerary...")
         async for event in itinerary_agent.run_async(ctx):
@@ -83,3 +112,5 @@ class OrchestratorAgent(BaseAgent):
 
 
 orchestrator_agent = OrchestratorAgent()
+orchestrator_agent._adk_origin_app_name = "wandr"
+orchestrator_agent._adk_origin_path = __file__

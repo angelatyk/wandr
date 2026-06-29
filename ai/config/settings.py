@@ -1,10 +1,8 @@
+import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    google_places_api_key: str = "mock-places-key"
-    google_maps_api_key: str = "mock-maps-key"
-    google_tts_api_key: str = "mock-tts-key"
-    gcs_bucket_name: str = "mock-bucket"
+    gemini_api_key: str | None = None
     model_name: str = "gemini-2.5-flash"
 
     class Config:
@@ -12,3 +10,6 @@ class Settings(BaseSettings):
         extra = "ignore"
 
 settings = Settings()
+
+if settings.gemini_api_key:
+    os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
