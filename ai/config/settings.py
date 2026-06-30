@@ -1,5 +1,6 @@
 import os
 from pydantic_settings import BaseSettings
+import os
 
 class Settings(BaseSettings):
     gemini_api_key: str | None = None

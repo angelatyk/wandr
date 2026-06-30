@@ -34,6 +34,8 @@ async def process_all_stops(
         for stop in day.stops
     ]
 
+    stops = [stop for day in itinerary_model.days for stop in day.stops]
+    tasks = [process_single_stop(stop, persona_model) for stop in stops]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     scripts: list[AudioScript] = []

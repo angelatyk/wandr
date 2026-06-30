@@ -25,7 +25,6 @@ class OrchestratorAgent(BaseAgent):
         )
 
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
-        print("arrived at orchestrator agent")
         logger.info("Orchestrator starting pipeline execution")
 
         # 1. Run Profiler — emits state_delta(persona) which runner applies to ctx.session.state

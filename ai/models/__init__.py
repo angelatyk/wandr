@@ -10,6 +10,7 @@ __all__ = [
     "ItineraryDay",
     "ItineraryModel",
     "StopResearchResult",
+    "PlaceDetails",
     "AudioScript",
     "AudioScriptsModel",
     "RouteStop",
