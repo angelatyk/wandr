@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopNav from '../components/TopNav'
 import Footer from '../components/Footer'
@@ -16,10 +17,32 @@ const HERO_IMAGE =
  */
 export default function HomePage() {
   const navigate = useNavigate()
+  
+  const [vibe, setVibe] = useState('')
+  const [location, setLocation] = useState('')
+  const [duration, setDuration] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleQuickWander = (e) => {
+  const handleQuickWander = async (e) => {
     e.preventDefault()
-    navigate('/refine')
+    if (!vibe && !location && !duration) return
+    
+    setIsLoading(true)
+    try {
+      const res = await fetch('/api/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vibe, location, duration })
+      })
+      const data = await res.json()
+      if (data.plan_id) {
+        navigate(`/refine?planId=${data.plan_id}`)
+      }
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -73,6 +96,8 @@ export default function HomePage() {
                     id="vibe"
                     rows={3}
                     placeholder="Describe your perfect afternoon… or use the fields below."
+                    value={vibe}
+                    onChange={(e) => setVibe(e.target.value)}
                     className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-4 px-3 resize-none"
                     style={{ fontFamily: 'var(--font-body)' }}
                   />
@@ -95,6 +120,8 @@ export default function HomePage() {
                   <input
                     type="text"
                     placeholder="Current location"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
                     className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
                     style={{ fontFamily: 'var(--font-body)' }}
                   />
@@ -104,7 +131,8 @@ export default function HomePage() {
                   <select
                     className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface py-3 px-3 appearance-none"
                     style={{ fontFamily: 'var(--font-body)' }}
-                    defaultValue=""
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
                   >
                     <option value="" disabled>Time available?</option>
                     <option value="1h">1 Hour</option>
@@ -117,10 +145,11 @@ export default function HomePage() {
               {/* CTA */}
               <button
                 type="submit"
-                className="bg-primary text-white font-semibold text-xs uppercase tracking-widest py-4 px-8 rounded-xl hover:bg-primary-tint transition-colors duration-300 active:scale-95 w-full md:w-auto md:self-end"
+                disabled={isLoading}
+                className="bg-primary text-white font-semibold text-xs uppercase tracking-widest py-4 px-8 rounded-xl hover:bg-primary-tint transition-colors duration-300 active:scale-95 disabled:opacity-50 disabled:active:scale-100 w-full md:w-auto md:self-end"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
-                Quick Wander
+                {isLoading ? 'Starting...' : 'Quick Wander'}
               </button>
             </form>
           </div>
