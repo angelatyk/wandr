@@ -74,6 +74,10 @@ class ProfilerAgent(BaseAgent):
     async def _run_async_impl(
         self, ctx: InvocationContext
     ) -> AsyncGenerator[Event, None]:
+        if ctx.session.state.get("persona"):
+            logger.debug("ProfilerAgent skipping because persona is already in state.")
+            return
+
         logger.debug("ProfilerAgent building conversation history from session events")
 
         # Reconstruct the conversation history so the model sees the full context

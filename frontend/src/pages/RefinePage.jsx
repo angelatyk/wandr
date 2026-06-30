@@ -30,10 +30,17 @@ export default function RefinePage() {
       navigate('/')
       return
     }
-    // Auto-advance if the profiler is done and itinerary generation is underway or completed.
-    // If the Profiler did not ask any clarification questions, this will skip the refine page.
-    if (status === 'planning' || status === 'researching' || status === 'routing' || status === 'complete') {
-       navigate(`/verify?planId=${planId}`)
+    // Auto-advance once the profiler hands off — the itinerary agent will fire next.
+    // awaiting_selection = itinerary options ready for user to review on VerifyPage.
+    // If the profiler had no clarifying questions, this skips the refine page entirely.
+    if (
+      status === 'planning' ||
+      status === 'awaiting_selection' ||
+      status === 'finalised' ||
+      status === 'routing' ||
+      status === 'complete'
+    ) {
+      navigate(`/verify?planId=${planId}`)
     }
   }, [status, navigate, planId])
 

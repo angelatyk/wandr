@@ -73,6 +73,10 @@ class OrchestratorAgent(BaseAgent):
         itinerary_dict = ctx.session.state.get("itinerary")
         persona_dict = ctx.session.state.get("persona")
 
+        if not itinerary_dict:
+            logger.info("Itinerary missing — pipeline paused, waiting for user to select options.")
+            return
+
         if itinerary_dict and persona_dict:
             # Deserialize dicts back to typed models before passing to the pipeline layer
             itinerary = ItineraryModel.model_validate(itinerary_dict)
@@ -94,7 +98,7 @@ class OrchestratorAgent(BaseAgent):
                 ),
             )
         else:
-            logger.error("Missing itinerary or persona in state — skipping stop processor.")
+            logger.error("Missing persona in state — skipping stop processor.")
 
         # 4. Run Logistics — emits state_delta(route) which runner applies to ctx.session.state
         logger.info("Running Logistics...")
