@@ -167,46 +167,21 @@ async def run_stop_research(stop: StopModel, persona: PersonaModel) -> StopResea
         raise RuntimeError(f"Stop research returned invalid JSON: {raw}") from exc
 
 
+
 class StopResearchAgent(BaseAgent):
     """ADK wrapper — delegates to run_stop_research when stop + persona are in state."""
 
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
-        stop_id = ctx.session.state.get("temp:current_stop_id")
-        stop_name = ctx.session.state.get("temp:current_stop_name", "Unknown Stop")
-        persona_data = ctx.session.state.get("persona")
-
-        if not stop_id or not persona_data:
-            logger.error("Stop research missing stop_id or persona in session state")
-            yield Event(
-                author=self.name,
-                content=types.Content(
-                    role="model",
-                    parts=[types.Part(text="Stop research failed: missing stop or persona.")],
-                ),
-            )
-            return
-
-        persona = (
-            persona_data
-            if isinstance(persona_data, PersonaModel)
-            else PersonaModel.model_validate(persona_data)
-        )
-        stop = StopModel(
-            place_id=stop_id,
-            name=stop_name,
-            address=ctx.session.state.get("temp:current_stop_address", ""),
-            day=ctx.session.state.get("temp:current_stop_day", 1),
-            order=ctx.session.state.get("temp:current_stop_order", 1),
-        )
-
-        result = await run_stop_research(stop, persona)
-        logger.info("Stop research completed for %s (score=%.2f)", result.name, result.persona_score)
+        # Read the stop-scoped key set by the stop processor for this invocation
+        stop_id = ctx.session.state.get("temp:active_stop_id", "unknown")
+        stop_name = ctx.session.state.get(f"temp:stop:{stop_id}:name", "Unknown Stop")
+        print(f"arrived at stop research agent: {stop_name}")
 
         yield Event(
             author=self.name,
             content=types.Content(
                 role="model",
-                parts=[types.Part(text=result.model_dump_json())],
+                parts=[types.Part(text=f"Stop research completed for {stop_name}.")],
             ),
         )
 
