@@ -17,7 +17,6 @@ class OrchestratorAgent(BaseAgent):
         super().__init__(name=name, sub_agents=[profiler_agent, itinerary_agent, logistics_agent])
 
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
-        print("arrived at orchestrator agent")
         logger.info("Orchestrator starting pipeline execution")
 
         # 1. Run Profiler
@@ -36,7 +35,7 @@ class OrchestratorAgent(BaseAgent):
         if itinerary and persona:
             logger.info("Running parallel Stop Processor...")
             audio_scripts = await process_all_stops(itinerary, persona, ctx)
-            ctx.session.state["audio_scripts"] = audio_scripts
+            ctx.session.state["audio_scripts"] = audio_scripts.model_dump()
         else:
             logger.error("Missing itinerary or persona in state for stop processor.")
 
