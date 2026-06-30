@@ -8,13 +8,13 @@ from google.genai import Client, types
 from google.genai.errors import ClientError
 from pydantic import ValidationError
 
-from wandr.config.settings import settings
-from wandr.models.audio import AudioScript
-from wandr.models.persona import PersonaModel
-from wandr.models.research import StopResearchResult
-from wandr.models.trip import StopModel
-from wandr.tools.exceptions import TTSError
-from wandr.tools.tts import generate_audio
+from ai.config.settings import settings
+from ai.models.audio import AudioScript
+from ai.models.persona import PersonaModel
+from ai.models.research import StopResearchResult
+from ai.models.trip import StopModel
+from ai.tools.exceptions import TTSError
+from ai.tools.tts import generate_audio
 
 logger = logging.getLogger(__name__)
 

@@ -9,12 +9,12 @@ from google.genai import Client, types
 from google.genai.errors import ClientError
 from pydantic import ValidationError
 
-from wandr.config.settings import settings
-from wandr.models.persona import PersonaModel
-from wandr.models.place import PlaceDetails
-from wandr.models.research import StopResearchResult
-from wandr.models.trip import StopModel
-from wandr.tools.maps import get_place_details
+from ai.config.settings import settings
+from ai.models.persona import PersonaModel
+from ai.models.place import PlaceDetails
+from ai.models.research import StopResearchResult
+from ai.models.trip import StopModel
+from ai.tools.maps import get_place_details
 
 logger = logging.getLogger(__name__)
 

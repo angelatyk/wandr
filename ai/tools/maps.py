@@ -6,9 +6,9 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from wandr.config.settings import settings
-from wandr.models.place import PlaceDetails
-from wandr.tools.exceptions import MapsAPIError, PlaceNotFoundError
+from ai.config.settings import settings
+from ai.models.place import PlaceDetails
+from ai.tools.exceptions import MapsAPIError, PlaceNotFoundError
 
 logger = logging.getLogger(__name__)
 
