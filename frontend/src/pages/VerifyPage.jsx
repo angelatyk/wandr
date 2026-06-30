@@ -114,12 +114,32 @@ export default function VerifyPage() {
         </div>
       </main>
 
-      {/* Floating finalize button */}
-      <div className="fixed bottom-0 left-0 w-full p-4 md:p-8 bg-gradient-to-t from-surface via-surface/90 to-transparent z-50 flex justify-center pointer-events-none">
+      {/* Floating finalize button & Refine input */}
+      <div className="fixed bottom-0 left-0 w-full p-4 md:p-8 bg-gradient-to-t from-surface via-surface/90 to-transparent z-50 flex flex-col items-center pointer-events-none">
+        <div className="pointer-events-auto w-full max-w-4xl mx-auto mb-4 px-5 md:px-0">
+          <div className="glass rounded-2xl p-4 shadow-[0px_4px_20px_rgba(10,25,47,0.05)] border border-outline-variant/30 bg-surface/80">
+            <label
+              className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-3"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              Refine Your Itinerary
+            </label>
+            <div className="relative flex items-center">
+              <textarea
+                rows={1}
+                className="w-full bg-surface-container-low border-none rounded-xl py-3 pl-4 pr-12 text-base focus:ring-1 focus:ring-primary resize-none"
+                placeholder="Add a coffee stop near Ginza..."
+              />
+              <button className="absolute right-2 p-2 text-primary hover:text-primary-tint transition-colors flex items-center justify-center">
+                <span className="material-symbols-outlined">auto_awesome</span>
+              </button>
+            </div>
+          </div>
+        </div>
         <button
           onClick={() => navigate('/itinerary')}
-          className="pointer-events-auto bg-primary text-white font-semibold text-xs uppercase tracking-widest px-8 py-4 rounded-2xl flex items-center justify-center min-w-[280px] gap-2 active:scale-95 transition-all hover:bg-primary-tint"
-          style={{ fontFamily: 'var(--font-body)', boxShadow: 'var(--shadow-fab)' }}
+          className="pointer-events-auto bg-primary text-white font-semibold text-xs uppercase tracking-widest px-8 py-4 rounded-2xl flex items-center justify-center min-w-[280px] gap-2 active:scale-95 transition-all hover:bg-primary-tint shadow-[0px_8px_32px_rgba(10,25,47,0.2)]"
+          style={{ fontFamily: 'var(--font-body)' }}
         >
           Finalize Itinerary
           <span className="material-symbols-outlined text-[18px]">check_circle</span>
