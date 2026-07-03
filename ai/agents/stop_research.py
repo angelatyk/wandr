@@ -161,7 +161,10 @@ async def run_stop_research(stop: StopModel, persona: PersonaModel) -> StopResea
     logger.debug("Stop research raw output: %s", raw)
 
     try:
-        return StopResearchResult.model_validate_json(raw)
+        result = StopResearchResult.model_validate_json(raw)
+        logger.info("Stop research completed for %s (score: %s)", stop.name, result.persona_score)
+        logger.info("Facts found:\n" + "\n".join(f"- {f}" for f in result.context_facts))
+        return result
     except (ValidationError, ValueError) as exc:
         logger.error("Stop research JSON validation failed: %s", exc)
         raise RuntimeError(f"Stop research returned invalid JSON: {raw}") from exc

@@ -81,6 +81,12 @@ class OrchestratorAgent(BaseAgent):
             itinerary = ItineraryModel.model_validate(itinerary_dict)
             persona = PersonaModel.model_validate(persona_dict)
 
+            logger.info("Finalized itinerary contains %d days.", len(itinerary.days))
+            for day in itinerary.days:
+                logger.info("  Day %d:", day.day)
+                for stop in day.stops:
+                    logger.info("    Stop %d: %s (%s)", stop.order, stop.name, stop.place_id)
+
             logger.info("Running parallel Stop Processor...")
             # process_all_stops is a plain async function — no ctx passed (pipeline must not touch ADK)
             audio_scripts = await process_all_stops(itinerary, persona)
