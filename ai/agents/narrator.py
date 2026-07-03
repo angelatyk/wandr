@@ -179,6 +179,7 @@ async def run_narrator(
 
     try:
         audio = AudioScript.model_validate_json(raw)
+        logger.info("Narrator generated script for %s:\n%s", stop.name, audio.script)
     except (ValidationError, ValueError) as exc:
         logger.error("Narrator JSON validation failed: %s", exc)
         raise RuntimeError(f"Narrator returned invalid JSON: {raw}") from exc

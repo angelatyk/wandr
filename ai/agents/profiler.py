@@ -98,6 +98,9 @@ class ProfilerAgent(BaseAgent):
             )
             return
 
+        last_user_msg = next((m.parts[0].text for m in reversed(history) if m.role == "user" and m.parts), "Unknown")
+        logger.info("Profiler processing user prompt: %s", last_user_msg)
+
         response = await _client.aio.models.generate_content(
             model=settings.model_name,
             contents=history,
@@ -119,6 +122,7 @@ class ProfilerAgent(BaseAgent):
 
         if persona is not None:
             # We have a valid persona — write it to state and let the pipeline continue.
+            logger.info("Profiler successfully resolved persona: %s", persona.model_dump())
             yield Event(
                 author=self.name,
                 actions=EventActions(state_delta={"persona": persona.model_dump()}),
