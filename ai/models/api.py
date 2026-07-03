@@ -4,8 +4,10 @@ from typing import Optional
 
 class TripRequest(BaseModel):
     vibe: Optional[str] = None
-    location: Optional[str] = None
+    destination: Optional[str] = None
+    current_location: Optional[str] = None
     duration: Optional[str] = None
+    persona_type: Optional[str] = None
 
 
 class SelectRequest(TripRequest):

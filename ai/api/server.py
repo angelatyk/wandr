@@ -56,10 +56,14 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         parts = []
         if request.vibe:
             parts.append(f"Vibe/Description: {request.vibe}")
-        if request.location:
-            parts.append(f"Location: {request.location}")
+        if hasattr(request, "current_location") and request.current_location:
+            parts.append(f"Current Location: {request.current_location}")
+        if hasattr(request, "destination") and request.destination:
+            parts.append(f"Destination: {request.destination}")
         if request.duration:
             parts.append(f"Duration: {request.duration}")
+        if hasattr(request, "persona_type") and request.persona_type:
+            parts.append(f"Travel Persona: {request.persona_type}")
         # For SelectRequest (refine/finalize) include refinement_text in the message
         # so it lands in conversation history that the itinerary agent reads.
         if hasattr(request, "refinement_text") and request.refinement_text:

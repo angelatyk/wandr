@@ -70,6 +70,18 @@ Rules for each field:
 _client = Client()
 
 
+def _extract_json(raw: str) -> str | None:
+    """
+    Pull the outermost JSON object from raw text.
+    Returns the JSON string if found, None otherwise.
+    """
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return raw[start : end + 1]
+    return None
+
+
 class ProfilerAgent(BaseAgent):
     async def _run_async_impl(
         self, ctx: InvocationContext
@@ -113,10 +125,11 @@ class ProfilerAgent(BaseAgent):
         logger.debug("Profiler raw LLM output: %s", raw)
 
         # Try to interpret the response as a PersonaModel JSON.
+        json_str = _extract_json(raw)
         persona: PersonaModel | None = None
-        if raw.startswith("{"):
+        if json_str:
             try:
-                persona = PersonaModel.model_validate_json(raw)
+                persona = PersonaModel.model_validate_json(json_str)
             except (ValidationError, ValueError) as exc:
                 logger.warning("Profiler output looked like JSON but failed validation: %s", exc)
 

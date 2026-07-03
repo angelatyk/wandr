@@ -19,20 +19,45 @@ export default function HomePage() {
   const navigate = useNavigate()
   
   const [vibe, setVibe] = useState('')
-  const [location, setLocation] = useState('')
+  const [currentLocation, setCurrentLocation] = useState('')
+  const [destination, setDestination] = useState('')
   const [duration, setDuration] = useState('')
+  const [selectedPersona, setSelectedPersona] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
 
   const handleQuickWander = async (e) => {
-    e.preventDefault()
-    if (!vibe && !location && !duration) return
+    if (e && e.preventDefault) e.preventDefault()
+    
+    const hasVibe = !!vibe.trim()
+    const hasStructured = !!destination.trim() && !!duration.trim()
+    
+    if (!hasVibe && !hasStructured) {
+      alert("Please either describe your vibe, or provide both destination and duration.")
+      return
+    }
+
+    if (duration.trim()) {
+      const dur = duration.trim().toLowerCase()
+      // Basic check: must contain a number, or common time/date words
+      const looksLikeTime = /\d/.test(dur) || /hour|day|week|month|weekend|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/.test(dur)
+      if (!looksLikeTime) {
+        alert("Please enter a clearer duration or date range (e.g., '3 days', 'weekend', 'Aug 1-5').")
+        return
+      }
+    }
     
     setIsLoading(true)
     try {
       const res = await fetch('/api/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vibe, location, duration })
+        body: JSON.stringify({ 
+          vibe, 
+          current_location: currentLocation, 
+          destination, 
+          duration, 
+          persona_type: selectedPersona 
+        })
       })
       const data = await res.json()
       if (data.plan_id) {
@@ -95,7 +120,7 @@ export default function HomePage() {
                   <textarea
                     id="vibe"
                     rows={3}
-                    placeholder="Describe your perfect afternoon… or use the fields below."
+                    placeholder="Describe your perfect trip, tell me where you want to explore, or use the fields below."
                     value={vibe}
                     onChange={(e) => setVibe(e.target.value)}
                     className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-4 px-3 resize-none"
@@ -115,30 +140,48 @@ export default function HomePage() {
 
               {/* Structured fields */}
               <div className="flex flex-col md:flex-row gap-3">
-                <div className="flex-1 flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors">
-                  <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">location_on</span>
-                  <input
-                    type="text"
-                    placeholder="Current location"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
-                    style={{ fontFamily: 'var(--font-body)' }}
-                  />
+                {/* Location Fields Column */}
+                <div className="flex-1 flex flex-col gap-3 min-w-0">
+                  <div className="flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors">
+                    <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">near_me</span>
+                    <input
+                      type="text"
+                      placeholder="Current location (optional)"
+                      value={currentLocation}
+                      onChange={(e) => setCurrentLocation(e.target.value)}
+                      className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
+                      style={{ fontFamily: 'var(--font-body)' }}
+                    />
+                  </div>
+                  <div className="flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors">
+                    <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">location_on</span>
+                    <input
+                      type="text"
+                      placeholder="Destination"
+                      value={destination}
+                      onChange={(e) => setDestination(e.target.value)}
+                      className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
+                      style={{ fontFamily: 'var(--font-body)' }}
+                    />
+                  </div>
                 </div>
-                <div className="flex-1 flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors">
-                  <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">schedule</span>
-                  <select
-                    className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface py-3 px-3 appearance-none"
-                    style={{ fontFamily: 'var(--font-body)' }}
+
+                {/* Duration Field Column */}
+                <div className="relative flex-1 flex flex-col justify-center bg-surface-white/70 rounded-xl px-4 py-3 border border-transparent focus-within:border-outline-variant transition-colors min-w-0">
+                  <label htmlFor="duration" className="text-sm font-medium text-on-surface-muted mb-1 flex items-start gap-2 leading-snug cursor-pointer" style={{ fontFamily: 'var(--font-body)' }}>
+                    <span className="material-symbols-outlined text-[20px] shrink-0">schedule</span>
+                    <span>Time available (e.g. 2 hours, 1 week, Aug 12-14)</span>
+                  </label>
+                  <input
+                    id="duration"
+                    type="text"
+                    placeholder="Type here..."
                     value={duration}
                     onChange={(e) => setDuration(e.target.value)}
-                  >
-                    <option value="" disabled>Time available?</option>
-                    <option value="1h">1 Hour</option>
-                    <option value="2h">2 Hours</option>
-                    <option value="half-day">Half Day</option>
-                  </select>
+                    className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-1 pl-[28px]"
+                    style={{ fontFamily: 'var(--font-body)' }}
+                    autoComplete="off"
+                  />
                 </div>
               </div>
 
@@ -149,14 +192,20 @@ export default function HomePage() {
                 className="bg-primary text-white font-semibold text-xs uppercase tracking-widest py-4 px-8 rounded-xl hover:bg-primary-tint transition-colors duration-300 active:scale-95 disabled:opacity-50 disabled:active:scale-100 w-full md:w-auto md:self-end"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
-                {isLoading ? 'Starting...' : 'Quick Wander'}
+                {isLoading ? 'Starting...' : "Let's Wander"}
               </button>
             </form>
           </div>
         </section>
 
         {/* ── Persona Grid ── */}
-        <PersonaGrid personas={PERSONAS} />
+        <PersonaGrid 
+          personas={PERSONAS} 
+          selectedPersona={selectedPersona}
+          onSelectPersona={(id) => setSelectedPersona(prev => prev === id ? null : id)}
+          onContinue={handleQuickWander}
+          isLoading={isLoading}
+        />
 
       </main>
 
