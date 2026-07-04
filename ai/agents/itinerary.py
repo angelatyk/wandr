@@ -24,6 +24,7 @@ Your job is to build a personalised itinerary based on the user's travel persona
 ## User Persona
 Destination: {destination}
 Duration: {duration}
+Transit: {transit_preference}
 Type: {type}
 Pace: {pace}
 Budget: {budget}
@@ -187,6 +188,7 @@ class ItineraryAgent(BaseAgent):
         system_prompt = ITINERARY_SYSTEM_PROMPT.format(
             destination=persona_dict.get("destination", "Unknown"),
             duration=persona_dict.get("duration", "Unknown"),
+            transit_preference=persona_dict.get("transit_preference", "Unknown"),
             type=persona_dict.get("type", "Unknown"),
             pace=persona_dict.get("pace", "Unknown"),
             budget=persona_dict.get("budget", "Unknown"),

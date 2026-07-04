@@ -24,11 +24,15 @@ accounting for travel times, opening hours, and practical flow.
 ## The Itinerary
 {itinerary_json}
 
+## Transit Preference
+{transit_preference}
+
 ## Your Task
 1. Analyze the stops for each day.
 2. Determine a logical order for the stops to minimize travel time.
 3. Explicitly add a `break_duration` (in minutes) for lunch, dinner, or rest between stops if needed.
-4. Output the route matching the exact JSON schema provided.
+4. Set the `transit_mode` according to the user's transit preference ("driving", "transit", "walking", or mix if "mixed").
+5. Output the route matching the exact JSON schema provided.
 
 Output ONLY a raw JSON object matching this schema exactly (no markdown, no prose):
 {{
@@ -72,8 +76,11 @@ class LogisticsAgent(BaseAgent):
 
         itinerary = ItineraryModel.model_validate(itinerary_dict)
 
+        persona_dict = ctx.session.state.get("persona", {})
+
         system_prompt = LOGISTICS_PROMPT.format(
-            itinerary_json=itinerary.model_dump_json(indent=2)
+            itinerary_json=itinerary.model_dump_json(indent=2),
+            transit_preference=persona_dict.get("transit_preference", "mixed")
         )
 
         logger.info("Calling Gemini for route optimization...")
