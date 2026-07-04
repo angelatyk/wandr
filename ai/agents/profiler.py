@@ -20,9 +20,10 @@ minimum information needed to plan a personalised trip and classify the user's
 travel persona from the conversation so far.
 
 ## Required fields
-You MUST have both of these before producing a persona:
+You MUST have ALL of these before producing a persona:
 - destination — where the user wants to go (city, region, or country)
 - duration — how long the trip or outing will last (e.g. "2 days", "3 hours", "a weekend")
+- transit_preference — whether they will have access to a car ("driving"), will rely on public transport ("transit"), will be exclusively "walking", or a mix ("mixed").
 
 ## Optional fields
 - current_location — if the user mentions they are already at a specific location
@@ -36,22 +37,24 @@ You MUST have both of these before producing a persona:
   this is impossible. Ask a clarifying question about this.
 - However, if they are planning a future trip with a reasonable duration (e.g., "I'm in Toronto, want to explore Tokyo for 3 days"), that is perfectly fine.
 
-## If either required field is missing or conflicts exist
+## If any required field is missing or conflicts exist
 Ask the single most important missing question or point out the impossibility.
 Be short and friendly.
 Examples:
   "Where are you heading?"
   "How much time do you have to explore?"
+  "Will you have access to a car, or will you be relying on transit or walking?"
   "You're in Toronto but want to explore Tokyo in 2 hours — are you planning a future trip?"
 Do NOT output JSON. Output the question only — nothing else.
 
-## If you have both required fields
+## If you have all required fields
 Determine the following and output ONLY a raw JSON object (no markdown fences,
 no commentary, nothing else before or after the braces):
 
 {
   "destination": "<city or region>",
   "duration": "<e.g. 2 hours, 3 days>",
+  "transit_preference": "<one of: driving | transit | walking | mixed>",
   "current_location": "<specific landmark/location or null>",
   "type": "<one of: foodie | artist | historian | adventurer | local-life>",
   "pace": "<one of: relaxed | moderate | packed>",
@@ -60,6 +63,7 @@ no commentary, nothing else before or after the braces):
 }
 
 Rules for each field:
+- transit_preference: Determine from the user's input (e.g., "I have a rental car" -> driving). Ask if missing.
 - type: if the user explicitly says "I'm a foodie" etc., use that directly.
   Otherwise infer from language clues. Default to "adventurer" if ambiguous.
 - pace: infer from "take it easy", "see as much as possible", etc. Default "moderate".
@@ -68,6 +72,18 @@ Rules for each field:
 """
 
 _client = Client()
+
+
+def _extract_json(raw: str) -> str | None:
+    """
+    Pull the outermost JSON object from raw text.
+    Returns the JSON string if found, None otherwise.
+    """
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return raw[start : end + 1]
+    return None
 
 
 class ProfilerAgent(BaseAgent):
@@ -113,10 +129,11 @@ class ProfilerAgent(BaseAgent):
         logger.debug("Profiler raw LLM output: %s", raw)
 
         # Try to interpret the response as a PersonaModel JSON.
+        json_str = _extract_json(raw)
         persona: PersonaModel | None = None
-        if raw.startswith("{"):
+        if json_str:
             try:
-                persona = PersonaModel.model_validate_json(raw)
+                persona = PersonaModel.model_validate_json(json_str)
             except (ValidationError, ValueError) as exc:
                 logger.warning("Profiler output looked like JSON but failed validation: %s", exc)
 

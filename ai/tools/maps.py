@@ -519,6 +519,37 @@ def _search_queries(destination: str, persona_type: str) -> tuple[str, ...]:
     return base + fallback
 
 
+async def autocomplete_places(query: str, limit: int = 5) -> list[str]:
+    """Return location suggestions for frontend text inputs."""
+    normalized_query = query.strip()
+    if not normalized_query:
+        return []
+
+    if _uses_mock_places():
+        return [normalized_query]
+
+    try:
+        payload = await _fetch_places_search(normalized_query, limit)
+    except MapsAPIError as exc:
+        logger.warning("Places autocomplete failed for query=%r (%s)", normalized_query, exc)
+        return [normalized_query]
+
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for place_payload in payload.get("places", []):
+        name = (place_payload.get("displayName") or {}).get("text") or ""
+        address = place_payload.get("formattedAddress") or ""
+        label = ", ".join(part for part in (name, address) if part)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        suggestions.append(label)
+        if len(suggestions) >= limit:
+            break
+
+    return suggestions or [normalized_query]
+
+
 async def places_search(destination: str, persona_type: str, limit: int = 5) -> list[PlaceSearchResult]:
     """Fetch factual place candidates for itinerary planning."""
     if not destination or not destination.strip():

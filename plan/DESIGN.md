@@ -22,15 +22,18 @@ This file is currently serving as the active in-repo tracker for the backend dat
 
 Done in the latest tranche:
 - `places_search(...)` now uses Google Places Text Search through the tool layer, with mock fallbacks for local development.
+- Frontend location inputs now call a backend `/api/places/autocomplete` endpoint so destination/current-location entry stays inside the same Places-backed stack.
 - Photo support now exists in the tool layer via Places photo media lookups, and itinerary options can carry a real `photo_url`.
 - The itinerary agent now grounds option generation on tool-fetched candidates instead of Gemini Google Search, then normalizes output back onto stable tool-backed `place_id` values.
 - Finalized itineraries are now built from confirmed options so `place_id`, `name`, and `address` stay stable into Stop Research, Narrator, and Logistics.
 - `get_place_details(...)` now requests coordinates from Places so real `place_id` values can flow into downstream map work.
+- Route building now uses live Directions API calls when a real Maps key is configured, with mock fallbacks preserved for local development.
+- Pipeline state now records `tool_usage` counters so we can see which paths used live APIs vs. mock fallbacks during a run.
 
 Still remaining:
 - No caching or persistent place-data table has been added yet.
-- Directions and route timing are still mock-backed.
 - The itinerary flow still needs broader live-key validation across more destinations/personas after the current tranche.
+- Tool-usage tracking is currently exposed through backend session state and `/api/plan/{plan_id}/tool-usage`; it is not yet rendered in the frontend.
 
 ---
 
@@ -59,6 +62,49 @@ Logistics ───────────────────────�
                                        writes: session.state["route"]
     ↓
 Orchestrator assembles final response (itinerary + audio + map)
+```
+
+### Request-to-render flow
+
+This is the current end-to-end logic flow for the app entrypoint and the live data path:
+
+```
+HomePage form
+    ↓
+POST /api/plan
+    - vibe
+    - current_location
+    - destination
+    - duration
+    - persona_type
+    - transit_preference
+    ↓
+Profiler
+    ↓
+Itinerary
+    ├── calls places_search(...)
+    └── writes itinerary_options or itinerary
+    ↓
+VerifyPage refine/finalize
+    ↓
+Stop Processor fan-out
+    ├── Stop Research ── calls get_place_details(...)
+    └── Narrator ─────── calls generate_audio(...)
+    ↓
+Logistics
+    ├── calls get_place_details(...)
+    └── calls get_directions(...)
+    ↓
+session.state
+    - persona
+    - itinerary_options / itinerary
+    - audio_scripts
+    - route
+    - tool_usage
+    ↓
+SSE stream + GET /api/plan/{plan_id}/tool-usage
+    ↓
+VerifyPage / ItineraryPage / debugging tools
 ```
 
 ---
@@ -455,7 +501,7 @@ gcloud run deploy wandr-api \
   --allow-unauthenticated \
   --min-instances=1 \
   --timeout=300 \
-  --set-secrets="GOOGLE_PLACES_API_KEY=google-places-api-key:latest,GOOGLE_MAPS_API_KEY=google-maps-api-key:latest,GOOGLE_TTS_API_KEY=google-tts-api-key:latest"
+  --set-secrets="GOOGLE_MAPS_API_KEY=google-maps-api-key:latest,GOOGLE_TTS_API_KEY=google-tts-api-key:latest"
 ```
 
 `--min-instances=1` prevents cold starts during the demo. `--timeout=300` gives the pipeline enough time to complete.

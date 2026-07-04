@@ -73,12 +73,7 @@ function PersonaCard({ persona, selected, onClick }) {
  * PersonaGrid — renders all persona cards and tracks selection.
  * Navigates to /refine on CTA click.
  */
-export default function PersonaGrid({ personas }) {
-  const [selected, setSelected] = useState(null)
-  const navigate = useNavigate()
-
-  const handleSelect = (id) => setSelected((prev) => (prev === id ? null : id))
-
+export default function PersonaGrid({ personas, selectedPersona, onSelectPersona, onContinue, isLoading }) {
   return (
     <section className="py-6">
       <div className="mb-6 flex justify-between items-end">
@@ -100,21 +95,21 @@ export default function PersonaGrid({ personas }) {
           <PersonaCard
             key={p.id}
             persona={p}
-            selected={selected === p.id}
-            onClick={handleSelect}
+            selected={selectedPersona === p.id}
+            onClick={onSelectPersona}
           />
         ))}
       </div>
 
-      {/* Continue CTA — only enabled when a persona is picked */}
-      {selected && (
+      {selectedPersona && (
         <div className="mt-8 flex justify-center">
           <button
-            onClick={() => navigate('/refine')}
-            className="bg-primary text-white font-semibold text-xs uppercase tracking-widest py-4 px-10 rounded-2xl hover:bg-primary-tint transition-all duration-300 active:scale-95 shadow-[var(--shadow-fab)] flex items-center gap-2"
+            onClick={onContinue}
+            disabled={isLoading}
+            className="bg-primary text-white font-semibold text-xs uppercase tracking-widest py-4 px-10 rounded-2xl hover:bg-primary-tint transition-all duration-300 active:scale-95 shadow-[var(--shadow-fab)] flex items-center gap-2 disabled:opacity-50"
             style={{ fontFamily: 'var(--font-body)' }}
           >
-            Continue
+            {isLoading ? 'Starting...' : 'Continue'}
             <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
           </button>
         </div>

@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 from typing import Dict, Set
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.adk.sessions import InMemorySessionService
@@ -16,6 +16,7 @@ from ai.agents.orchestrator import orchestrator_agent
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.events import PipelineEvent
 from ai.models.tool_usage import load_tool_usage
+from ai.tools.maps import autocomplete_places
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,10 +61,16 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         parts = []
         if request.vibe:
             parts.append(f"Vibe/Description: {request.vibe}")
-        if request.location:
-            parts.append(f"Location: {request.location}")
+        if request.current_location:
+            parts.append(f"Current location: {request.current_location}")
+        if request.destination:
+            parts.append(f"Destination: {request.destination}")
         if request.duration:
             parts.append(f"Duration: {request.duration}")
+        if request.persona_type:
+            parts.append(f"Preferred persona type: {request.persona_type}")
+        if request.transit_preference:
+            parts.append(f"Transit preference: {request.transit_preference}")
         # For SelectRequest (refine/finalize) include refinement_text in the message
         # so it lands in conversation history that the itinerary agent reads.
         if hasattr(request, "refinement_text") and request.refinement_text:
@@ -293,6 +300,11 @@ async def select_places(plan_id: str, body: SelectRequest):
     asyncio.create_task(run_pipeline(plan_id, run_body, queue))
     return {"plan_id": plan_id, "action": body.action}
 
+
+@app.get("/api/places/autocomplete")
+async def places_autocomplete(query: str = Query("", min_length=0, max_length=200)):
+    suggestions = await autocomplete_places(query)
+    return {"suggestions": suggestions}
 
 
 @app.get("/api/plan/{plan_id}/tool-usage")

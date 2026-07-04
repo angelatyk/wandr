@@ -46,9 +46,9 @@ export default function VerifyPage() {
     setActionStatus(null)
   }, [itineraryOptions])
 
-  // Navigate to /itinerary once the finalised itinerary is in state
+  // Navigate to /itinerary once the full pipeline is complete
   useEffect(() => {
-    if (status === 'finalised') {
+    if (status === 'complete') {
       navigate(`/itinerary?planId=${planId}`)
     }
   }, [status, navigate, planId])
@@ -145,7 +145,7 @@ export default function VerifyPage() {
       </header>
 
       {/* ── Main ── */}
-      <main className="max-w-4xl mx-auto px-5 md:px-16 pt-6 pb-12">
+      <main className="max-w-4xl mx-auto pt-24 pb-48 md:pb-56 md:pt-32 px-5 md:px-0 relative z-10">
 
         {/* Page heading */}
         <div className="mb-10 text-center md:text-left">
@@ -189,15 +189,17 @@ export default function VerifyPage() {
             {itineraryOptions.days.map((day) => (
               <div key={day.day} className="mb-6">
                 {/* Day label */}
-                <div className="relative mb-6">
-                  <div className="absolute -left-10 md:-left-6 top-1 w-4 h-4 rounded-full bg-secondary-container border-2 border-surface" />
-                  <h3
-                    className="text-2xl font-semibold text-primary"
-                    style={{ fontFamily: 'var(--font-display)' }}
-                  >
-                    Day {day.day}
-                  </h3>
-                </div>
+                {(itineraryOptions.days?.length ?? 0) > 1 && (
+                  <div className="relative mb-6">
+                    <div className="absolute -left-10 md:-left-6 top-1 w-4 h-4 rounded-full bg-secondary-container border-2 border-surface" />
+                    <h3
+                      className="text-2xl font-semibold text-primary"
+                      style={{ fontFamily: 'var(--font-display)' }}
+                    >
+                      Day {day.day}
+                    </h3>
+                  </div>
+                )}
 
                 {/* Place option cards */}
                 <div className="flex flex-col gap-6">
@@ -219,7 +221,7 @@ export default function VerifyPage() {
                             'rounded-2xl overflow-hidden border transition-all duration-300',
                             isConfirmed
                               ? 'border-outline-variant/30 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-raised)] hover:-translate-y-1 bg-surface-white'
-                              : 'opacity-60 border-outline-variant/20 bg-surface-white',
+                              : 'border-outline-variant/20 bg-surface-white',
                           ].join(' ')}
                         >
                           <div className="flex flex-col md:flex-row">
@@ -229,10 +231,7 @@ export default function VerifyPage() {
                                 <img
                                   src={place.photo_url}
                                   alt={place.name}
-                                  className={[
-                                    'absolute inset-0 w-full h-full object-cover',
-                                    !isConfirmed ? 'grayscale-[40%]' : '',
-                                  ].join(' ')}
+                                  className="absolute inset-0 w-full h-full object-cover"
                                   onError={(e) => { e.target.style.display = 'none' }}
                                 />
                               ) : (
@@ -291,18 +290,20 @@ export default function VerifyPage() {
                                 </p>
 
                                 {place.persona_note && (
-                                  <p
-                                    className="text-xs italic text-secondary border-l-2 border-secondary/30 pl-3"
-                                    style={{ fontFamily: 'var(--font-body)' }}
-                                  >
-                                    {place.persona_note}
-                                  </p>
+                                  <div className="bg-secondary/10 rounded-r-lg py-2 px-3 border-l-[3px] border-secondary">
+                                    <p
+                                      className="text-xs italic font-semibold text-secondary"
+                                      style={{ fontFamily: 'var(--font-body)' }}
+                                    >
+                                      {place.persona_note}
+                                    </p>
+                                  </div>
                                 )}
                               </div>
 
                               {/* Toggle */}
                               <div className="flex items-center justify-between border-t border-outline-variant/30 pt-4 mt-4">
-                                <div className={['flex items-center gap-2', isConfirmed ? 'text-secondary' : 'text-outline'].join(' ')}>
+                                <div className={['flex items-center gap-2', isConfirmed ? 'text-secondary font-bold drop-shadow-sm' : 'text-outline'].join(' ')}>
                                   <span className="material-symbols-outlined text-[18px] icon-filled">
                                     {isConfirmed ? 'check_circle' : 'cancel'}
                                   </span>
@@ -311,18 +312,18 @@ export default function VerifyPage() {
                                   </span>
                                 </div>
 
-                                <label className="relative inline-flex items-center cursor-pointer gap-3">
-                                  <input
-                                    type="checkbox"
-                                    checked={isConfirmed}
-                                    onChange={() => togglePlace(place.place_id)}
-                                    className="sr-only peer"
-                                  />
-                                  <div className="w-11 h-6 bg-surface-high rounded-full peer peer-checked:bg-primary peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-outline-variant after:rounded-full after:h-5 after:w-5 after:transition-all relative" />
+                                <button
+                                  type="button"
+                                  onClick={() => togglePlace(place.place_id)}
+                                  className="relative inline-flex items-center cursor-pointer gap-3"
+                                >
+                                  <div className={['w-11 h-6 rounded-full relative transition-colors', isConfirmed ? 'bg-primary' : 'bg-surface-high'].join(' ')}>
+                                    <div className={['absolute top-[2px] left-[2px] bg-white border border-outline-variant rounded-full h-5 w-5 transition-transform duration-200', isConfirmed ? 'translate-x-full' : ''].join(' ')} />
+                                  </div>
                                   <span className="text-xs font-semibold text-on-surface-muted" style={{ fontFamily: 'var(--font-body)' }}>
                                     {isConfirmed ? 'Keep' : 'Add back'}
                                   </span>
-                                </label>
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -354,7 +355,7 @@ export default function VerifyPage() {
                 id="refine-input"
                 rows={1}
                 className="w-full bg-surface-container-low border-none rounded-xl py-3 pl-4 pr-12 text-base focus:ring-1 focus:ring-primary resize-none"
-                placeholder={isLoading ? 'Please wait…' : 'I also want to see a coffee shop near the park…'}
+                placeholder={isLoading ? 'Please wait…' : 'Tell me how else I can make your trip better…'}
                 value={refineText}
                 onChange={(e) => setRefineText(e.target.value)}
                 disabled={isLoading}
