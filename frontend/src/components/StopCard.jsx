@@ -12,7 +12,7 @@
  *   onPlay       — () => void (itinerary variant)
  *   active       — boolean, highlights the card when its audio is playing
  */
-export default function StopCard({ stop, variant = 'itinerary', included = true, onToggle, onPlay, active = false }) {
+export default function StopCard({ stop, variant = 'itinerary', included = true, onToggle, onPlay, active = false, onViewMap }) {
   const isVerify = variant === 'verify'
   const removed = isVerify && !included
 
@@ -141,11 +141,15 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
             <div className="flex items-center gap-4 mt-1">
               <a
                 href="#"
+                onClick={(e) => {
+                  e.preventDefault()
+                  if (onViewMap) onViewMap()
+                }}
                 className="text-xs font-semibold uppercase tracking-widest text-secondary hover:text-primary transition-colors flex items-center gap-1"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
                 <span className="material-symbols-outlined text-[16px]">map</span>
-                View Map
+                View on map
               </a>
               <span className="text-outline-variant">|</span>
               <span
