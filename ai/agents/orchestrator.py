@@ -7,6 +7,7 @@ from google.adk.events.event_actions import EventActions
 from google.adk.agents.invocation_context import InvocationContext
 from google.genai import types
 
+from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_audio_scripts
 from ai.agents.profiler import profiler_agent
 from ai.agents.itinerary import itinerary_agent
 from ai.agents.logistics import logistics_agent
@@ -90,11 +91,18 @@ class OrchestratorAgent(BaseAgent):
             logger.info("Running parallel Stop Processor...")
             # process_all_stops is a plain async function — no ctx passed (pipeline must not touch ADK)
             audio_scripts = await process_all_stops(itinerary, persona)
+            current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
+            updated_usage = merge_tool_usage(current_usage, usage_from_audio_scripts(audio_scripts.scripts))
 
             # Emit the result as state_delta so it's persisted via the runner, not via direct mutation
             yield Event(
                 author=self.name,
-                actions=EventActions(state_delta={"audio_scripts": audio_scripts.model_dump()}),
+                actions=EventActions(
+                    state_delta={
+                        "audio_scripts": audio_scripts.model_dump(),
+                        "tool_usage": updated_usage.model_dump(),
+                    }
+                ),
                 content=types.Content(
                     role="model",
                     parts=[types.Part(

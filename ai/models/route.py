@@ -1,5 +1,6 @@
+from typing import List, Literal
+
 from pydantic import BaseModel
-from typing import List
 
 class RouteStop(BaseModel):
     place_id: str
@@ -7,6 +8,8 @@ class RouteStop(BaseModel):
     travel_time_from_prev_min: int
     lat: float
     lng: float
+    place_source: Literal["api", "mock"] = "api"
+    travel_source: Literal["api", "mock", "none"] = "none"
 
 class RouteModel(BaseModel):
     stops: List[RouteStop]

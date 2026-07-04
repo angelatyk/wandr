@@ -7,6 +7,7 @@ from google.adk.events.event_actions import EventActions
 from google.adk.agents.invocation_context import InvocationContext
 from google.genai import types
 
+from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_route
 from ai.models.route import RouteModel, RouteStop
 from ai.models.trip import ItineraryModel, StopModel
 from ai.tools.maps import get_directions, get_place_details
@@ -37,10 +38,12 @@ async def run_logistics(itinerary: ItineraryModel) -> RouteModel:
         lng = place.lng if place.lng is not None else _DEFAULT_LNG
 
         travel_min = 0
+        travel_source = "none"
         if index > 0:
             prev = ordered[index - 1]
             leg = await get_directions(prev.place_id, stop.place_id)
             travel_min = int(leg.get("duration_min", 0))
+            travel_source = "api" if leg.get("source") == "api" else "mock"
             total_travel_min += travel_min
 
         route_stops.append(
@@ -50,6 +53,8 @@ async def run_logistics(itinerary: ItineraryModel) -> RouteModel:
                 travel_time_from_prev_min=travel_min,
                 lat=lat,
                 lng=lng,
+                place_source=place.source,
+                travel_source=travel_source,
             )
         )
 
@@ -84,10 +89,17 @@ class LogisticsAgent(BaseAgent):
 
         itinerary = ItineraryModel.model_validate(itinerary_dict)
         route = await run_logistics(itinerary)
+        current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
+        updated_usage = merge_tool_usage(current_usage, usage_from_route(route))
 
         yield Event(
             author=self.name,
-            actions=EventActions(state_delta={"route": route.model_dump()}),
+            actions=EventActions(
+                state_delta={
+                    "route": route.model_dump(),
+                    "tool_usage": updated_usage.model_dump(),
+                }
+            ),
             content=types.Content(
                 role="model",
                 parts=[

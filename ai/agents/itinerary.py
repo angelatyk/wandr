@@ -12,6 +12,7 @@ from google.genai import Client, types
 from pydantic import ValidationError
 
 from ai.models.place import PlaceSearchResult
+from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_places_search
 from ai.models.trip import (
     DayOptionsModel,
     ItineraryDay,
@@ -468,6 +469,8 @@ class ItineraryAgent(BaseAgent):
             persona_type=persona_type,
             limit=_search_limit_for_days(day_count),
         )
+        current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
+        updated_usage = merge_tool_usage(current_usage, usage_from_places_search(search_candidates))
         for place in confirmed:
             if place.get("place_id") and place["place_id"] not in {candidate.place_id for candidate in search_candidates}:
                 search_candidates.append(_candidate_from_confirmed_place(place))
@@ -594,7 +597,12 @@ class ItineraryAgent(BaseAgent):
             # and its presence is what lets the orchestrator continue past this agent.
             yield Event(
                 author=self.name,
-                actions=EventActions(state_delta={"itinerary_options": options_dict}),
+                actions=EventActions(
+                    state_delta={
+                        "itinerary_options": options_dict,
+                        "tool_usage": updated_usage.model_dump(),
+                    }
+                ),
                 content=types.Content(
                     role="model",
                     parts=[types.Part(text=options_json)],
@@ -623,7 +631,12 @@ class ItineraryAgent(BaseAgent):
 
             yield Event(
                 author=self.name,
-                actions=EventActions(state_delta={"itinerary": itinerary.model_dump()}),
+                actions=EventActions(
+                    state_delta={
+                        "itinerary": itinerary.model_dump(),
+                        "tool_usage": updated_usage.model_dump(),
+                    }
+                ),
                 content=types.Content(
                     role="model",
                     parts=[types.Part(text="Itinerary finalised.")],

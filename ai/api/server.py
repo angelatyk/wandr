@@ -15,6 +15,7 @@ from ai.config.settings import settings
 from ai.agents.orchestrator import orchestrator_agent
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.events import PipelineEvent
+from ai.models.tool_usage import load_tool_usage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -292,6 +293,17 @@ async def select_places(plan_id: str, body: SelectRequest):
     asyncio.create_task(run_pipeline(plan_id, run_body, queue))
     return {"plan_id": plan_id, "action": body.action}
 
+
+
+@app.get("/api/plan/{plan_id}/tool-usage")
+async def get_tool_usage(plan_id: str):
+    current_session = await session_service.get_session(
+        app_name="agents",
+        user_id="user",
+        session_id=plan_id,
+    )
+    usage = load_tool_usage(None if current_session is None else current_session.state.get("tool_usage"))
+    return usage.model_dump()
 
 
 @app.get("/api/plan/{plan_id}/stream")

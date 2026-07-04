@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACES_DETAILS_URL = "https://places.googleapis.com/v1/places/{place_id}"
 PLACE_PHOTO_URL = "https://places.googleapis.com/v1/{photo_name}/media"
+MAPS_DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 PLACE_SEARCH_FIELD_MASK = (
     "places.id,places.displayName,places.formattedAddress,places.regularOpeningHours,"
     "places.editorialSummary,places.rating,places.userRatingCount,places.types,"
@@ -617,19 +618,83 @@ _MOCK_TRAVEL_MIN: dict[tuple[str, str], int] = {
 _DEFAULT_WALK_MIN = 12
 
 
+def _uses_mock_directions() -> bool:
+    return settings.google_maps_api_key.strip() == "mock-maps-key"
+
+
+async def _fetch_directions(
+    origin_place_id: str,
+    destination_place_id: str,
+    mode: str,
+) -> dict[str, Any]:
+    query = urllib.parse.urlencode(
+        {
+            "origin": f"place_id:{origin_place_id}",
+            "destination": f"place_id:{destination_place_id}",
+            "mode": mode,
+            "key": settings.google_maps_api_key,
+        }
+    )
+    url = f"{MAPS_DIRECTIONS_URL}?{query}"
+
+    def _get() -> dict[str, Any]:
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode(errors="replace")
+            raise MapsAPIError(f"Directions API error {exc.code}: {body_text}") from exc
+        except urllib.error.URLError as exc:
+            raise MapsAPIError(f"Directions request failed: {exc}") from exc
+
+    return await asyncio.to_thread(_get)
+
+
 async def get_directions(
     origin_place_id: str,
     destination_place_id: str,
     mode: str = "walking",
 ) -> dict:
     """Fetch travel distance and time between places."""
-    duration_min = _MOCK_TRAVEL_MIN.get(
-        (origin_place_id, destination_place_id),
-        _DEFAULT_WALK_MIN,
-    )
-    return {
-        "duration_min": duration_min,
-        "distance_m": duration_min * 80,
-        "mode": mode,
-        "source": "mock",
-    }
+    duration_min = _MOCK_TRAVEL_MIN.get((origin_place_id, destination_place_id), _DEFAULT_WALK_MIN)
+
+    if _uses_mock_directions():
+        return {
+            "duration_min": duration_min,
+            "distance_m": duration_min * 80,
+            "mode": mode,
+            "source": "mock",
+        }
+
+    try:
+        payload = await _fetch_directions(origin_place_id, destination_place_id, mode)
+        route = (payload.get("routes") or [{}])[0]
+        leg = (route.get("legs") or [{}])[0]
+        duration = leg.get("duration") or {}
+        distance = leg.get("distance") or {}
+        duration_sec = duration.get("value")
+        distance_m = distance.get("value")
+
+        if duration_sec is None or distance_m is None:
+            raise MapsAPIError(f"Directions response missing leg data: {payload}")
+
+        return {
+            "duration_min": max(1, round(duration_sec / 60)),
+            "distance_m": distance_m,
+            "mode": mode,
+            "source": "api",
+        }
+    except MapsAPIError as exc:
+        logger.warning(
+            "Directions lookup failed for %s -> %s (%s); using fallback duration.",
+            origin_place_id,
+            destination_place_id,
+            exc,
+        )
+        return {
+            "duration_min": duration_min,
+            "distance_m": duration_min * 80,
+            "mode": mode,
+            "source": "mock",
+        }
