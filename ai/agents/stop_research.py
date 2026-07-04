@@ -162,6 +162,7 @@ async def run_stop_research(stop: StopModel, persona: PersonaModel) -> StopResea
 
     try:
         result = StopResearchResult.model_validate_json(raw)
+        result = result.model_copy(update={"data_source": place.source})
         logger.info("Stop research completed for %s (score: %s)", stop.name, result.persona_score)
         logger.info("Facts found:\n" + "\n".join(f"- {f}" for f in result.context_facts))
         return result

@@ -1,5 +1,6 @@
+from typing import List, Literal
+
 from pydantic import BaseModel
-from typing import List
 
 class StopResearchResult(BaseModel):
     place_id: str
@@ -9,3 +10,4 @@ class StopResearchResult(BaseModel):
     context_facts: List[str]
     opening_hours: str
     is_seasonal: bool
+    data_source: Literal["api", "mock"] = "api"

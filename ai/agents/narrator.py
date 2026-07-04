@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Literal
 
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
@@ -36,6 +36,14 @@ def persona_voice_style(persona: PersonaModel) -> str:
 def _estimate_duration_sec(script: str) -> int:
     word_count = len(script.split())
     return max(30, min(90, round(word_count / 2.5)))
+
+
+def _audio_source_from_url(audio_url: str) -> Literal["inline", "signed_url", "text_only"]:
+    if not audio_url:
+        return "text_only"
+    if audio_url.startswith("data:audio/"):
+        return "inline"
+    return "signed_url"
 
 
 NARRATOR_PROMPT = """\
@@ -184,13 +192,26 @@ async def run_narrator(
         logger.error("Narrator JSON validation failed: %s", exc)
         raise RuntimeError(f"Narrator returned invalid JSON: {raw}") from exc
 
-    audio = audio.model_copy(update={"place_id": stop.place_id, "audio_url": ""})
+    audio = audio.model_copy(
+        update={
+            "place_id": stop.place_id,
+            "audio_url": "",
+            "research_source": research.data_source,
+            "tts_attempted": True,
+            "audio_source": "text_only",
+        }
+    )
     if not audio.duration_sec:
         audio = audio.model_copy(update={"duration_sec": _estimate_duration_sec(audio.script)})
 
     try:
         audio_url = await generate_audio(audio.script, voice_style)
-        audio = audio.model_copy(update={"audio_url": audio_url})
+        audio = audio.model_copy(
+            update={
+                "audio_url": audio_url,
+                "audio_source": _audio_source_from_url(audio_url),
+            }
+        )
     except TTSError as exc:
         logger.warning("TTS failed for %s — returning text-only script: %s", stop.name, exc)
 

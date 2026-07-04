@@ -4,31 +4,32 @@ import logging
 from uuid import uuid4
 from typing import Dict, Set
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai.types import Content, Part
-import urllib.parse
-import urllib.request
-import urllib.error
 
 from ai.config.settings import settings
 from ai.agents.orchestrator import orchestrator_agent
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.events import PipelineEvent
+from ai.models.tool_usage import load_tool_usage
+from ai.tools.maps import autocomplete_places
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 
 app = FastAPI(title="Wandr API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -60,14 +61,16 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         parts = []
         if request.vibe:
             parts.append(f"Vibe/Description: {request.vibe}")
-        if hasattr(request, "current_location") and request.current_location:
-            parts.append(f"Current Location: {request.current_location}")
-        if hasattr(request, "destination") and request.destination:
+        if request.current_location:
+            parts.append(f"Current location: {request.current_location}")
+        if request.destination:
             parts.append(f"Destination: {request.destination}")
         if request.duration:
             parts.append(f"Duration: {request.duration}")
-        if hasattr(request, "persona_type") and request.persona_type:
-            parts.append(f"Travel Persona: {request.persona_type}")
+        if request.persona_type:
+            parts.append(f"Preferred persona type: {request.persona_type}")
+        if request.transit_preference:
+            parts.append(f"Transit preference: {request.transit_preference}")
         # For SelectRequest (refine/finalize) include refinement_text in the message
         # so it lands in conversation history that the itinerary agent reads.
         if hasattr(request, "refinement_text") and request.refinement_text:
@@ -175,9 +178,10 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
 
     except Exception as e:
         logger.error("Pipeline error for plan %s: %s", plan_id, e, exc_info=True)
+        # Do not forward raw exception text to clients — may contain API paths or keys
         await queue.put(PipelineEvent(
             type="error",
-            data={"message": str(e)},
+            data={"message": "Pipeline failed. Please try again or adjust your request."},
             progress=100
         ).model_dump())
 
@@ -190,46 +194,6 @@ async def create_plan(request: TripRequest):
     asyncio.create_task(run_pipeline(plan_id, request, queue))
     return {"plan_id": plan_id}
 
-
-@app.get("/api/places/autocomplete")
-async def places_autocomplete(query: str):
-    if not query.strip():
-        return {"suggestions": []}
-    
-    # Mock mode if no valid API key
-    if not settings.google_maps_api_key or settings.google_maps_api_key in {"", "mock-places-key", "your_google_maps_api_key_here"}:
-        mock_cities = ["Tokyo, Japan", "Toronto, Canada", "Paris, France", "New York, USA", "London, UK", "Rome, Italy", "Sydney, Australia"]
-        q_lower = query.lower()
-        suggestions = [c for c in mock_cities if q_lower in c.lower()]
-        if not suggestions:
-            # Fallback so it always shows something for testing
-            suggestions = [f"{query} City", f"{query} Station"]
-        return {"suggestions": suggestions}
-
-    url = "https://places.googleapis.com/v1/places:autocomplete"
-    payload = json.dumps({"input": query})
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_maps_api_key,
-    }
-
-    def _post():
-        req = urllib.request.Request(url, data=payload.encode(), headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                return json.loads(response.read().decode())
-        except Exception as e:
-            logger.error("Autocomplete API error: %s", e)
-            return {}
-
-    data = await asyncio.to_thread(_post)
-    suggestions = []
-    for prediction in data.get("suggestions", []):
-        text = prediction.get("placePrediction", {}).get("text", {}).get("text")
-        if text:
-            suggestions.append(text)
-            
-    return {"suggestions": suggestions}
 
 @app.post("/api/plan/{plan_id}/reply")
 async def reply_plan(plan_id: str, request: TripRequest):
@@ -280,12 +244,20 @@ async def select_places(plan_id: str, body: SelectRequest):
     confirmed_places: list[dict] = []
     confirmed_ids = set(body.confirmed_place_ids)
     for day in options_dict.get("days", []):
-        for place in day.get("options", []):
+        for order, place in enumerate(day.get("options", []), start=1):
             if place.get("place_id") in confirmed_ids:
                 confirmed_places.append({
                     "place_id": place["place_id"],
                     "name": place["name"],
+                    "address": place.get("address", "Unknown"),
+                    "photo_url": place.get("photo_url", ""),
+                    "suggested_duration": place.get("suggested_duration", ""),
+                    "description": place.get("description", ""),
+                    "must_see": place.get("must_see", False),
+                    "hours_of_operation": place.get("hours_of_operation", "Unknown"),
+                    "persona_note": place.get("persona_note", ""),
                     "day": day["day"],
+                    "order": order,
                 })
 
     logger.info(
@@ -303,6 +275,7 @@ async def select_places(plan_id: str, body: SelectRequest):
             state_delta={
                 "itinerary_options_confirmed": confirmed_places,
                 "itinerary_refinement_text": body.refinement_text,
+                "itinerary_action": body.action,
                 "itinerary_options": None
             }
         )
@@ -327,6 +300,22 @@ async def select_places(plan_id: str, body: SelectRequest):
     asyncio.create_task(run_pipeline(plan_id, run_body, queue))
     return {"plan_id": plan_id, "action": body.action}
 
+
+@app.get("/api/places/autocomplete")
+async def places_autocomplete(query: str = Query("", min_length=0, max_length=200)):
+    suggestions = await autocomplete_places(query)
+    return {"suggestions": suggestions}
+
+
+@app.get("/api/plan/{plan_id}/tool-usage")
+async def get_tool_usage(plan_id: str):
+    current_session = await session_service.get_session(
+        app_name="agents",
+        user_id="user",
+        session_id=plan_id,
+    )
+    usage = load_tool_usage(None if current_session is None else current_session.state.get("tool_usage"))
+    return usage.model_dump()
 
 
 @app.get("/api/plan/{plan_id}/stream")

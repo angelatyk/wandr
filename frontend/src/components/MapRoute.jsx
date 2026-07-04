@@ -1,59 +1,43 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  APIProvider,
-  Map,
-  useMap,
-} from '@vis.gl/react-google-maps';
+import { useCallback, useEffect, useState } from 'react'
+import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps'
 
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.GOOGLE_JS_API_KEY
 
-/**
- * Custom Polyline component for @vis.gl/react-google-maps.
- * Draws a path connecting coordinates on the map.
- */
-function Polyline({ path, strokeColor, strokeOpacity, strokeWeight }) {
-  const map = useMap();
-  const [polyline, setPolyline] = useState(null);
+function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.8, strokeWeight = 3 }) {
+  const map = useMap()
+  const [polyline, setPolyline] = useState(null)
 
   useEffect(() => {
-    if (!map || !window.google?.maps) return;
+    if (!map || !window.google?.maps) return
 
     const poly = new window.google.maps.Polyline({
-      path: path,
-      strokeColor: strokeColor || '#0A192F',
-      strokeOpacity: strokeOpacity || 0.8,
-      strokeWeight: strokeWeight || 3,
-    });
-
-    poly.setMap(map);
-    setPolyline(poly);
+      path,
+      strokeColor,
+      strokeOpacity,
+      strokeWeight,
+    })
+    poly.setMap(map)
+    setPolyline(poly)
 
     return () => {
-      poly.setMap(null);
-    };
-  }, [map]);
+      poly.setMap(null)
+    }
+  }, [map, path, strokeColor, strokeOpacity, strokeWeight])
 
   useEffect(() => {
-    if (polyline && path) {
-      polyline.setPath(path);
-    }
-  }, [polyline, path]);
+    if (polyline && path) polyline.setPath(path)
+  }, [polyline, path])
 
-  return null;
+  return null
 }
 
-/**
- * Custom legacy Marker component for @vis.gl/react-google-maps.
- * Does not require any Map ID to render, preventing MapId-related load errors.
- */
 function LegacyMarker({ position, title, labelText, onClick }) {
-  const map = useMap();
-  const [marker, setMarker] = useState(null);
+  const map = useMap()
 
   useEffect(() => {
-    if (!map || !window.google?.maps) return;
+    if (!map || !window.google?.maps) return
 
-    const m = new window.google.maps.Marker({
+    const marker = new window.google.maps.Marker({
       position,
       map,
       title,
@@ -71,123 +55,91 @@ function LegacyMarker({ position, title, labelText, onClick }) {
         strokeColor: '#D4AF37',
         strokeWeight: 2.5,
       },
-    });
+    })
 
-    if (onClick) {
-      const listener = m.addListener('click', onClick);
-      return () => {
-        listener.remove();
-        m.setMap(null);
-      };
-    }
-
-    setMarker(m);
+    let listener = null
+    if (onClick) listener = marker.addListener('click', onClick)
 
     return () => {
-      m.setMap(null);
-    };
-  }, [map, onClick]);
-
-  useEffect(() => {
-    if (marker && position) {
-      marker.setPosition(position);
+      if (listener) listener.remove()
+      marker.setMap(null)
     }
-  }, [marker, position]);
+  }, [map, onClick, position, title, labelText])
 
-  return null;
+  return null
 }
 
-/**
- * Inner component that auto-fits map bounds when stops change.
- * Must be rendered inside <Map> so it can call useMap().
- */
 function BoundsController({ stops }) {
-  const map = useMap();
+  const map = useMap()
 
   useEffect(() => {
-    if (!map || !stops || stops.length === 0 || !window.google?.maps) return;
+    if (!map || !stops?.length || !window.google?.maps) return
 
-    const bounds = new window.google.maps.LatLngBounds();
-    stops.forEach(s => bounds.extend({ lat: s.lat, lng: s.lng }));
-    map.fitBounds(bounds, 60);
-  }, [map, stops]);
+    const bounds = new window.google.maps.LatLngBounds()
+    stops.forEach((stop) => bounds.extend({ lat: stop.lat, lng: stop.lng }))
+    map.fitBounds(bounds, 60)
+  }, [map, stops])
 
-  return null;
+  return null
 }
 
-/**
- * MapRoute — Google Map with numbered stop markers and a connecting route line.
- *
- * Props:
- *   route       — RouteModel { stops: RouteStop[] }
- *   onPinClick  — (stopId: string) => void
- */
-export default function MapRoute({ route, onPinClick }) {
-  const validStops = (route?.stops ?? []).filter(
-    s => typeof s.lat === 'number' && typeof s.lng === 'number'
-  );
-
-  const path = validStops.map(s => ({ lat: s.lat, lng: s.lng }));
+export default function MapRoute({ route, stops = [], onPinClick }) {
+  const validRouteStops = (route?.stops ?? []).filter(
+    (stop) => typeof stop.lat === 'number' && typeof stop.lng === 'number'
+  )
+  const path = validRouteStops.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
 
   const handleClick = useCallback(
-    stopId => {
-      if (onPinClick) onPinClick(stopId);
+    (stopId) => {
+      if (onPinClick) onPinClick(stopId)
     },
     [onPinClick]
-  );
+  )
 
   if (!API_KEY) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-surface-container">
         <p className="text-on-surface-muted text-sm">
-          Map unavailable — set VITE_GOOGLE_MAPS_API_KEY in frontend/.env
+          Map unavailable — set `GOOGLE_JS_API_KEY` or `VITE_GOOGLE_MAPS_API_KEY`.
         </p>
       </div>
-    );
+    )
   }
 
-  // Default center (Toronto) shown while route is loading
   const defaultCenter =
-    validStops.length > 0
-      ? { lat: validStops[0].lat, lng: validStops[0].lng }
-      : { lat: 43.65107, lng: -79.347015 };
+    validRouteStops.length > 0
+      ? { lat: validRouteStops[0].lat, lng: validRouteStops[0].lng }
+      : { lat: 35.6762, lng: 139.6503 }
 
   return (
     <APIProvider apiKey={API_KEY}>
       <div style={{ width: '100%', height: '100%' }}>
         <Map
           defaultCenter={defaultCenter}
-          defaultZoom={validStops.length > 0 ? 13 : 12}
+          defaultZoom={validRouteStops.length > 0 ? 13 : 12}
           disableDefaultUI={true}
           zoomControl={true}
           gestureHandling="greedy"
           style={{ width: '100%', height: '100%' }}
         >
-          {/* Auto-fit bounds when stops are available */}
-          {validStops.length > 0 && <BoundsController stops={validStops} />}
+          {validRouteStops.length > 0 && <BoundsController stops={validRouteStops} />}
 
-          {/* Route polyline */}
-          {path.length > 1 && (
-            <Polyline
-              path={path}
-              strokeColor="#0A192F"
-              strokeOpacity={0.8}
-              strokeWeight={3}
-            />
-          )}
+          {path.length > 1 && <Polyline path={path} />}
 
-          {/* Numbered markers */}
-          {validStops.map((stop, index) => (
-            <LegacyMarker
-              key={stop.place_id}
-              position={{ lat: stop.lat, lng: stop.lng }}
-              onClick={() => handleClick(stop.place_id)}
-              title={stop.name || `Stop ${index + 1}`}
-              labelText={String(index + 1)}
-            />
-          ))}
+          {validRouteStops.map((stop, index) => {
+            const stopName = stops.find((candidate) => candidate.id === stop.place_id)?.name || `Stop ${index + 1}`
+            return (
+              <LegacyMarker
+                key={stop.place_id}
+                position={{ lat: stop.lat, lng: stop.lng }}
+                onClick={() => handleClick(stop.place_id)}
+                title={stopName}
+                labelText={String(index + 1)}
+              />
+            )
+          })}
         </Map>
       </div>
     </APIProvider>
-  );
+  )
 }

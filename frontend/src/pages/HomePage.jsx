@@ -32,6 +32,7 @@ export default function HomePage() {
   const [currentLocation, setCurrentLocation] = useState("");
   const [destination, setDestination] = useState("");
   const [duration, setDuration] = useState("");
+  const [transitPreference, setTransitPreference] = useState("walking");
   const [selectedPersona, setSelectedPersona] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentBgIndex, setCurrentBgIndex] = useState(0);
@@ -83,6 +84,7 @@ export default function HomePage() {
           destination,
           duration,
           persona_type: selectedPersona,
+          transit_preference: transitPreference,
         }),
       });
       const data = await res.json();
@@ -181,49 +183,81 @@ export default function HomePage() {
               </div>
 
               {/* Structured fields */}
-              <div className="flex flex-col md:flex-row gap-3">
+              <div className="flex flex-col gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {/* Location Fields Column */}
-                <div className="flex-1 flex flex-col gap-3 min-w-0">
-                  <LocationAutocomplete
-                    id="currentLocation"
-                    placeholder="Current location (optional)"
-                    value={currentLocation}
-                    onChange={setCurrentLocation}
-                    icon="near_me"
-                  />
-                  <LocationAutocomplete
-                    id="destination"
-                    placeholder="Destination"
-                    value={destination}
-                    onChange={setDestination}
-                    icon="location_on"
-                  />
+                  <div className="flex-1 flex flex-col gap-3 min-w-0">
+                    <LocationAutocomplete
+                      id="currentLocation"
+                      placeholder="Current location (optional)"
+                      value={currentLocation}
+                      onChange={setCurrentLocation}
+                      icon="near_me"
+                    />
+                    <LocationAutocomplete
+                      id="destination"
+                      placeholder="Destination"
+                      value={destination}
+                      onChange={setDestination}
+                      icon="location_on"
+                    />
+                  </div>
+
+                  {/* Duration Field Column */}
+                  <div className="relative flex-1 flex flex-col justify-center bg-surface-white/70 rounded-xl px-4 py-3 border border-transparent focus-within:border-outline-variant transition-colors min-w-0">
+                    <label
+                      htmlFor="duration"
+                      className="text-sm font-medium text-on-surface-muted mb-1 flex items-start gap-2 leading-snug cursor-pointer"
+                      style={{ fontFamily: "var(--font-body)" }}
+                    >
+                      <span className="material-symbols-outlined text-[20px] shrink-0">
+                        schedule
+                      </span>
+                      <span>
+                        Time available (e.g. 2 hours, 1 week, Aug 12-14)
+                      </span>
+                    </label>
+                    <input
+                      id="duration"
+                      type="text"
+                      placeholder="Type here..."
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                      className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-1 pl-[28px]"
+                      style={{ fontFamily: "var(--font-body)" }}
+                      autoComplete="off"
+                    />
+                  </div>
                 </div>
 
-                {/* Duration Field Column */}
-                <div className="relative flex-1 flex flex-col justify-center bg-surface-white/70 rounded-xl px-4 py-3 border border-transparent focus-within:border-outline-variant transition-colors min-w-0">
-                  <label
-                    htmlFor="duration"
-                    className="text-sm font-medium text-on-surface-muted mb-1 flex items-start gap-2 leading-snug cursor-pointer"
-                    style={{ fontFamily: "var(--font-body)" }}
-                  >
-                    <span className="material-symbols-outlined text-[20px] shrink-0">
-                      schedule
-                    </span>
-                    <span>
-                      Time available (e.g. 2 hours, 1 week, Aug 12-14)
-                    </span>
-                  </label>
-                  <input
-                    id="duration"
-                    type="text"
-                    placeholder="Type here..."
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-1 pl-[28px]"
-                    style={{ fontFamily: "var(--font-body)" }}
-                    autoComplete="off"
-                  />
+                <div className="bg-surface-white/70 rounded-xl px-4 py-4 border border-transparent transition-colors">
+                  <div className="flex items-center gap-2 mb-3 text-sm font-medium text-on-surface-muted" style={{ fontFamily: "var(--font-body)" }}>
+                    <span className="material-symbols-outlined text-[20px]">commute</span>
+                    <span>How will you get around?</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      ["walking", "Walking"],
+                      ["transit", "Transit"],
+                      ["driving", "Driving"],
+                      ["mixed", "Mixed"],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setTransitPreference(value)}
+                        className={[
+                          "px-4 py-2 rounded-full text-sm font-semibold transition-colors border",
+                          transitPreference === value
+                            ? "bg-primary text-white border-primary"
+                            : "bg-white text-on-surface border-outline-variant hover:border-primary/40",
+                        ].join(" ")}
+                        style={{ fontFamily: "var(--font-body)" }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

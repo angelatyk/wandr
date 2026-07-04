@@ -8,6 +8,7 @@ class TripRequest(BaseModel):
     current_location: Optional[str] = None
     duration: Optional[str] = None
     persona_type: Optional[str] = None
+    transit_preference: Optional[str] = None
 
 
 class SelectRequest(TripRequest):
