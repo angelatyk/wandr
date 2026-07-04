@@ -27,7 +27,7 @@ PLACE_DETAILS_FIELD_MASK = (
     "rating,userRatingCount,types,businessStatus,location"
 )
 
-_MOCK_PLACE_KEYS = {"", "mock-places-key", "your-places-api-key"}
+_MOCK_PLACE_KEYS = {"", "mock-google-cloud-key", "your-google-cloud-api-key"}
 _PHOTO_MAX_HEIGHT_PX = 640
 
 _PERSONA_SEARCH_QUERIES: dict[str, tuple[str, ...]] = {
@@ -55,7 +55,7 @@ _PERSONA_SEARCH_QUERIES: dict[str, tuple[str, ...]] = {
 
 
 def _uses_mock_places() -> bool:
-    return settings.google_places_api_key.strip() in _MOCK_PLACE_KEYS
+    return settings.google_cloud_api_key.strip() in _MOCK_PLACE_KEYS
 
 
 def _format_opening_hours(hours: dict[str, Any] | None) -> str:
@@ -121,7 +121,7 @@ async def _fetch_place_details(place_id: str) -> dict[str, Any]:
     url = PLACES_DETAILS_URL.format(place_id=encoded_id)
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_places_api_key,
+        "X-Goog-Api-Key": settings.google_cloud_api_key,
         "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
     }
 
@@ -153,7 +153,7 @@ async def _fetch_place_photo_url(photo_name: str) -> str:
         }
     )
     url = f"{PLACE_PHOTO_URL.format(photo_name=encoded_name)}?{query}"
-    headers = {"X-Goog-Api-Key": settings.google_places_api_key}
+    headers = {"X-Goog-Api-Key": settings.google_cloud_api_key}
 
     def _get() -> str:
         request = urllib.request.Request(url, headers=headers, method="GET")
@@ -177,7 +177,7 @@ async def _fetch_place_photo_url(photo_name: str) -> str:
 async def _fetch_places_search(query: str, page_size: int) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_places_api_key,
+        "X-Goog-Api-Key": settings.google_cloud_api_key,
         "X-Goog-FieldMask": PLACE_SEARCH_FIELD_MASK,
     }
     body = json.dumps(
@@ -206,7 +206,7 @@ async def _fetch_places_search(query: str, page_size: int) -> dict[str, Any]:
 async def _fetch_places_autocomplete(query: str) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_places_api_key,
+        "X-Goog-Api-Key": settings.google_cloud_api_key,
     }
     body = json.dumps(
         {
@@ -354,7 +354,7 @@ async def _fetch_directions(
             "origin": f"place_id:{origin_place_id}",
             "destination": f"place_id:{destination_place_id}",
             "mode": mode,
-            "key": settings.google_maps_api_key,
+            "key": settings.google_cloud_api_key,
         }
     )
     url = f"{MAPS_DIRECTIONS_URL}?{query}"

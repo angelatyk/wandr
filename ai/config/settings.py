@@ -3,20 +3,11 @@ import os
 from pydantic_settings import BaseSettings
 
 
-_MOCK_MAPS_KEY = "mock-maps-key"
-
 
 class Settings(BaseSettings):
     gemini_api_key: str | None = None
     google_application_credentials: str | None = None
-    google_places_api_key: str = "mock-places-key"
-    google_maps_api_key: str = "mock-maps-key"
-    google_js_api_key: str | None = None
-    vite_google_maps_api_key: str | None = None
-    google_directions_api_key: str | None = None
-    ggogle_direction_api_key: str | None = None
-    google_routes_api_key: str | None = None
-    google_tts_api_key: str = "mock-tts-key"
+    google_cloud_api_key: str = "mock-google-cloud-key"
     gcs_bucket_name: str = "mock-bucket"
     gcs_signed_url_ttl_seconds: int = 3600
     model_name: str = "gemini-2.5-flash"
@@ -29,17 +20,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-if settings.google_maps_api_key == _MOCK_MAPS_KEY:
-    fallback_maps_key = (
-        settings.google_directions_api_key
-        or settings.ggogle_direction_api_key
-        or settings.google_routes_api_key
-        or settings.google_js_api_key
-        or settings.vite_google_maps_api_key
-    )
-    if fallback_maps_key:
-        settings.google_maps_api_key = fallback_maps_key
 
 if settings.gemini_api_key:
     os.environ["GEMINI_API_KEY"] = settings.gemini_api_key

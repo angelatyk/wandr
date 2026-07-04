@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps'
 
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.GOOGLE_JS_API_KEY
+const API_KEY = import.meta.env.VITE_GOOGLE_CLOUD_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.GOOGLE_JS_API_KEY
 
 function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.8, strokeWeight = 3 }) {
   const map = useMap()
@@ -141,7 +141,7 @@ export default function MapRoute({ route, stops = [], onPinClick, activeStopId }
     return (
       <div className="w-full h-full flex items-center justify-center bg-surface-container">
         <p className="text-on-surface-muted text-sm">
-          Map unavailable — set `GOOGLE_JS_API_KEY` or `VITE_GOOGLE_MAPS_API_KEY`.
+          Map unavailable — set `VITE_GOOGLE_CLOUD_API_KEY`.
         </p>
       </div>
     )
