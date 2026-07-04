@@ -20,6 +20,7 @@ from ai.tools.maps import autocomplete_places
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+APP_NAME = "wandr"
 
 _cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 
@@ -46,14 +47,14 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
     try:
         runner = Runner(
             agent=orchestrator_agent,
-            app_name="agents",
+            app_name=APP_NAME,
             session_service=session_service,
         )
 
-        existing = await session_service.get_session(app_name="agents", user_id="user", session_id=plan_id)
+        existing = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
         if existing is None:
             await session_service.create_session(
-                app_name="agents",
+                app_name=APP_NAME,
                 user_id="user",
                 session_id=plan_id,
             )
@@ -87,7 +88,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
             session_id=plan_id,
             new_message=user_message,
         ):
-            current_session = await session_service.get_session(app_name="agents", user_id="user", session_id=plan_id)
+            current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
             state = current_session.state
 
             author = event.author
@@ -169,7 +170,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
 
         # Pipeline run complete
         progress = 100
-        current_session = await session_service.get_session(app_name="agents", user_id="user", session_id=plan_id)
+        current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
         await queue.put(PipelineEvent(
             type="complete",
             data=current_session.state,
@@ -234,7 +235,7 @@ async def select_places(plan_id: str, body: SelectRequest):
     pipeline_queues[plan_id] = queue
 
     # Pull the current session so we can update state before re-running.
-    current_session = await session_service.get_session(app_name="agents", user_id="user", session_id=plan_id)
+    current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
     if current_session is None:
         logger.error("select_places: session %s not found.", plan_id)
         return {"error": "Session not found"}, 404
@@ -310,7 +311,7 @@ async def places_autocomplete(query: str = Query("", min_length=0, max_length=20
 @app.get("/api/plan/{plan_id}/tool-usage")
 async def get_tool_usage(plan_id: str):
     current_session = await session_service.get_session(
-        app_name="agents",
+        app_name=APP_NAME,
         user_id="user",
         session_id=plan_id,
     )
@@ -328,7 +329,7 @@ async def stream_plan(plan_id: str):
         # Replay current state so reconnecting clients (e.g. after page refresh)
         # catch up immediately without waiting for the next pipeline event.
         try:
-            current_session = await session_service.get_session(app_name="agents", user_id="user", session_id=plan_id)
+            current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
             state = current_session.state
 
             if state.get("persona") is not None:

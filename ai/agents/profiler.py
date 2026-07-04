@@ -20,10 +20,10 @@ minimum information needed to plan a personalised trip and classify the user's
 travel persona from the conversation so far.
 
 ## Required fields
-You MUST have ALL of these before producing a persona:
+You MUST have BOTH of these before producing a persona:
 - destination — where the user wants to go (city, region, or country)
 - duration — how long the trip or outing will last (e.g. "2 days", "3 hours", "a weekend")
-- transit_preference — whether they will have access to a car ("driving"), will rely on public transport ("transit"), will be exclusively "walking", or a mix ("mixed").
+- transit_preference is optional — include it when the user provides it, otherwise default to "mixed".
 
 ## Optional fields
 - current_location — if the user mentions they are already at a specific location
@@ -37,17 +37,16 @@ You MUST have ALL of these before producing a persona:
   this is impossible. Ask a clarifying question about this.
 - However, if they are planning a future trip with a reasonable duration (e.g., "I'm in Toronto, want to explore Tokyo for 3 days"), that is perfectly fine.
 
-## If any required field is missing or conflicts exist
+## If either required field is missing or conflicts exist
 Ask the single most important missing question or point out the impossibility.
 Be short and friendly.
 Examples:
   "Where are you heading?"
   "How much time do you have to explore?"
-  "Will you have access to a car, or will you be relying on transit or walking?"
   "You're in Toronto but want to explore Tokyo in 2 hours — are you planning a future trip?"
 Do NOT output JSON. Output the question only — nothing else.
 
-## If you have all required fields
+## If you have both required fields
 Determine the following and output ONLY a raw JSON object (no markdown fences,
 no commentary, nothing else before or after the braces):
 
@@ -63,7 +62,7 @@ no commentary, nothing else before or after the braces):
 }
 
 Rules for each field:
-- transit_preference: Determine from the user's input (e.g., "I have a rental car" -> driving). Ask if missing.
+- transit_preference: Determine from the user's input (e.g., "I have a rental car" -> driving). If not mentioned, use "mixed".
 - type: if the user explicitly says "I'm a foodie" etc., use that directly.
   Otherwise infer from language clues. Default to "adventurer" if ambiguous.
 - pace: infer from "take it easy", "see as much as possible", etc. Default "moderate".

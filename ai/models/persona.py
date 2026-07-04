@@ -7,7 +7,7 @@ class PersonaModel(BaseModel):
     destination: str
     duration: str
     current_location: str | None = None
-    transit_preference: Literal["driving", "transit", "walking", "mixed"]
+    transit_preference: Literal["driving", "transit", "walking", "mixed"] = "mixed"
 
     # Traveller persona classification
     type: Literal["foodie", "artist", "historian", "adventurer", "local-life"]
