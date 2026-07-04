@@ -46,9 +46,9 @@ export default function VerifyPage() {
     setActionStatus(null)
   }, [itineraryOptions])
 
-  // Navigate to /itinerary once the finalised itinerary is in state
+  // Navigate to /itinerary once the full pipeline is complete
   useEffect(() => {
-    if (status === 'finalised') {
+    if (status === 'complete') {
       navigate(`/itinerary?planId=${planId}`)
     }
   }, [status, navigate, planId])
