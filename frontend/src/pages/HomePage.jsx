@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import TopNav from '../components/TopNav'
 import Footer from '../components/Footer'
 import PersonaGrid from '../components/PersonaGrid'
+import LocationAutocomplete from '../components/LocationAutocomplete'
 import { PERSONAS } from '../data/mockItinerary'
 
 const HERO_IMAGE =
@@ -142,28 +143,20 @@ export default function HomePage() {
               <div className="flex flex-col md:flex-row gap-3">
                 {/* Location Fields Column */}
                 <div className="flex-1 flex flex-col gap-3 min-w-0">
-                  <div className="flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors">
-                    <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">near_me</span>
-                    <input
-                      type="text"
-                      placeholder="Current location (optional)"
-                      value={currentLocation}
-                      onChange={(e) => setCurrentLocation(e.target.value)}
-                      className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
-                      style={{ fontFamily: 'var(--font-body)' }}
-                    />
-                  </div>
-                  <div className="flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors">
-                    <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">location_on</span>
-                    <input
-                      type="text"
-                      placeholder="Destination"
-                      value={destination}
-                      onChange={(e) => setDestination(e.target.value)}
-                      className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
-                      style={{ fontFamily: 'var(--font-body)' }}
-                    />
-                  </div>
+                  <LocationAutocomplete
+                    id="currentLocation"
+                    placeholder="Current location (optional)"
+                    value={currentLocation}
+                    onChange={setCurrentLocation}
+                    icon="near_me"
+                  />
+                  <LocationAutocomplete
+                    id="destination"
+                    placeholder="Destination"
+                    value={destination}
+                    onChange={setDestination}
+                    icon="location_on"
+                  />
                 </div>
 
                 {/* Duration Field Column */}

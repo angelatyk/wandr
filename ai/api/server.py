@@ -10,7 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai.types import Content, Part
+import urllib.parse
+import urllib.request
+import urllib.error
 
+from ai.config.settings import settings
 from ai.agents.orchestrator import orchestrator_agent
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.events import PipelineEvent
@@ -186,6 +190,46 @@ async def create_plan(request: TripRequest):
     asyncio.create_task(run_pipeline(plan_id, request, queue))
     return {"plan_id": plan_id}
 
+
+@app.get("/api/places/autocomplete")
+async def places_autocomplete(query: str):
+    if not query.strip():
+        return {"suggestions": []}
+    
+    # Mock mode if no valid API key
+    if not settings.google_places_api_key or settings.google_places_api_key in {"", "mock-places-key", "your_google_places_api_key_here"}:
+        mock_cities = ["Tokyo, Japan", "Toronto, Canada", "Paris, France", "New York, USA", "London, UK", "Rome, Italy", "Sydney, Australia"]
+        q_lower = query.lower()
+        suggestions = [c for c in mock_cities if q_lower in c.lower()]
+        if not suggestions:
+            # Fallback so it always shows something for testing
+            suggestions = [f"{query} City", f"{query} Station"]
+        return {"suggestions": suggestions}
+
+    url = "https://places.googleapis.com/v1/places:autocomplete"
+    payload = json.dumps({"input": query})
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": settings.google_places_api_key,
+    }
+
+    def _post():
+        req = urllib.request.Request(url, data=payload.encode(), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return json.loads(response.read().decode())
+        except Exception as e:
+            logger.error("Autocomplete API error: %s", e)
+            return {}
+
+    data = await asyncio.to_thread(_post)
+    suggestions = []
+    for prediction in data.get("suggestions", []):
+        text = prediction.get("placePrediction", {}).get("text", {}).get("text")
+        if text:
+            suggestions.append(text)
+            
+    return {"suggestions": suggestions}
 
 @app.post("/api/plan/{plan_id}/reply")
 async def reply_plan(plan_id: str, request: TripRequest):
