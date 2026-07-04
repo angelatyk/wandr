@@ -171,7 +171,6 @@ return StreamingResponse(event_generator(), media_type="text/event-stream")
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    google_places_api_key: str
     google_maps_api_key: str
     google_tts_api_key: str
     gcs_bucket_name: str

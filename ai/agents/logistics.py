@@ -132,12 +132,8 @@ class LogisticsAgent(BaseAgent):
                 total_travel += current.travel_time_from_prev_min
             else:
                 current.travel_time_from_prev_min = 0
-                # Just get the place details or directions to itself to get lat/lng
-                directions = await get_directions(
-                    current.place_id, current.place_id, current.transit_mode
-                )
-                current.lat = directions.get("lat", 0.0)
-                current.lng = directions.get("lng", 0.0)
+                # First stop of a day — no previous leg, skip the Directions call.
+                # Lat/lng will be 0 until a geocode pass is added.
 
         route.total_travel_min = total_travel
 

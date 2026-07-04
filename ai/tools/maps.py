@@ -22,7 +22,7 @@ _MOCK_PLACE_KEYS = {"", "mock-places-key", "your-places-api-key"}
 
 
 def _uses_mock_places() -> bool:
-    return settings.google_places_api_key.strip() in _MOCK_PLACE_KEYS
+    return settings.google_maps_api_key.strip() in _MOCK_PLACE_KEYS
 
 
 def _format_opening_hours(hours: dict[str, Any] | None) -> str:
@@ -110,7 +110,7 @@ async def _fetch_place_details(place_id: str) -> dict[str, Any]:
     url = PLACES_DETAILS_URL.format(place_id=encoded_id)
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_places_api_key,
+        "X-Goog-Api-Key": settings.google_maps_api_key,
         "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
     }
 
@@ -130,9 +130,65 @@ async def _fetch_place_details(place_id: str) -> dict[str, Any]:
     return await asyncio.to_thread(_get)
 
 
-async def places_search(destination: str, persona_type: str, limit: int = 5) -> list:
+PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+PLACES_SEARCH_FIELD_MASK = "places.id,places.displayName,places.formattedAddress"
+
+# Persona-type → Google-friendly search terms.
+# "popular {persona_type} spots" is meaningless to Google and returns junk.
+_PERSONA_SEARCH_TERMS: dict[str, str] = {
+    "foodie": "best restaurants food markets local cuisine dining",
+    "artist": "art galleries museums cultural attractions street art",
+    "historian": "historical landmarks monuments museums heritage sites",
+    "adventurer": "top tourist attractions sightseeing viewpoints outdoor activities",
+    "local-life": "popular cafes parks neighborhoods local attractions things to do",
+}
+
+async def places_search(destination: str, persona_type: str, limit: int = 10) -> list[dict]:
     """Fetch candidate places for a destination and persona type."""
-    return []
+    if _uses_mock_places():
+        return [
+            {"place_id": "sensoji_id", "name": "Senso-ji", "address": "2 Chome-3-1 Asakusa"},
+            {"place_id": "edo_museum_id", "name": "Edo-Tokyo Museum", "address": "1-4-1 Yokoami"}
+        ]
+        
+    focus = _PERSONA_SEARCH_TERMS.get(persona_type, "top tourist attractions popular things to do")
+    query = f"{focus} in {destination}"
+    logger.info("Places text search query: %r (persona=%s, limit=%d)", query, persona_type, limit)
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": settings.google_maps_api_key,
+        "X-Goog-FieldMask": PLACES_SEARCH_FIELD_MASK,
+    }
+    data = json.dumps({
+        "textQuery": query,
+        "languageCode": "en",
+        "maxResultCount": limit
+    }).encode("utf-8")
+
+    def _post() -> dict[str, Any]:
+        request = urllib.request.Request(PLACES_SEARCH_URL, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")
+            logger.error(f"Places API search error {exc.code}: {body}")
+            return {}
+        except urllib.error.URLError as exc:
+            logger.error(f"Places API search request failed: {exc}")
+            return {}
+
+    payload = await asyncio.to_thread(_post)
+    places = payload.get("places", [])
+    
+    results = []
+    for p in places:
+        results.append({
+            "place_id": p.get("id"),
+            "name": p.get("displayName", {}).get("text", "Unknown"),
+            "address": p.get("formattedAddress", "Unknown")
+        })
+    return results
 
 
 async def get_place_details(place_id: str) -> PlaceDetails:
@@ -206,6 +262,17 @@ async def get_directions(
             "lat": 35.6895 + random.uniform(-0.01, 0.01),
             "lng": 139.6917 + random.uniform(-0.01, 0.01),
         }
+
+    # Guard: if Maps API key is not configured, skip the call rather than sending
+    # an empty key that causes a guaranteed 400 from the Directions API.
+    if not settings.google_maps_api_key.strip():
+        logger.warning(
+            "GOOGLE_MAPS_API_KEY is not set — skipping Directions API call for %s → %s. "
+            "Add the key to .env to get real travel times.",
+            origin_place_id,
+            destination_place_id,
+        )
+        return {"distance_meters": 0, "duration_seconds": 0, "lat": 0.0, "lng": 0.0}
 
     payload = await _fetch_directions(origin_place_id, destination_place_id, mode)
     if payload.get("status") != "OK" or not payload.get("routes"):

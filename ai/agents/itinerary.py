@@ -9,7 +9,7 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.genai import Client, types
 from pydantic import ValidationError
 
-from ai.models.trip import ItineraryModel, ItineraryOptionsModel
+from ai.models.trip import ItineraryModel, ItineraryOptionsModel, ItineraryDay, StopModel
 from ai.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -36,9 +36,14 @@ Notes: {notes}
 ## Refinement Request
 {refinement_section}
 
+## Candidate Places (from Google Places API)
+Below are real places fetched from the Google Places API for this destination.
+You MUST select your options from this list. Do NOT invent places or place_ids.
+{candidates_section}
+
 ## Your Task
-You have access to Google Search. Use it to find real, popular places (with real
-addresses and opening hours) that match the persona. Aim for 3–5 options per day.
+Select 3–5 of the candidates above that best match the persona. Enrich each one
+with a description, suggested duration, opening hours, and a persona note.
 
 You operate in two modes:
 
@@ -133,7 +138,6 @@ async def _call_model(
         contents=history,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
-            tools=[types.Tool(google_search=types.GoogleSearch())],
         ),
     )
     return (response.text or "").strip()
@@ -184,17 +188,105 @@ class ItineraryAgent(BaseAgent):
             refinement_text,
         )
 
-        # Build system prompt, injecting confirmed places + refinement text.
+        # ── Finalize directly from confirmed list (no LLM pass needed) ──────
+        # When the user has confirmed places we already have the canonical
+        # place_ids from the options pass.  Sending them back through the LLM
+        # risks character-level corruption (e.g. "ChIJw631qfPI…" → "ChIJw631fPI…").
+        # Build the ItineraryModel directly to guarantee ID fidelity.
+        if confirmed:
+            from collections import defaultdict
+
+            destination = persona_dict.get("destination", "Unknown")
+
+            # Group confirmed stops by day, preserving insertion order as `order`.
+            by_day: dict[int, list[dict]] = defaultdict(list)
+            for place in confirmed:
+                by_day[place.get("day", 1)].append(place)
+
+            days = []
+            for day_num in sorted(by_day.keys()):
+                stops = [
+                    StopModel(
+                        place_id=p["place_id"],
+                        name=p.get("name", "Unknown"),
+                        address=p.get("address", ""),
+                        day=day_num,
+                        order=idx + 1,
+                    )
+                    for idx, p in enumerate(by_day[day_num])
+                ]
+                days.append(ItineraryDay(day=day_num, stops=stops))
+
+            itinerary = ItineraryModel(destination=destination, days=days)
+
+            logger.info(
+                "Itinerary finalised directly from confirmed list for '%s' (%d days):",
+                itinerary.destination, len(itinerary.days),
+            )
+            for day in itinerary.days:
+                logger.info("  Day %d — %d stops:", day.day, len(day.stops))
+                for stop in day.stops:
+                    logger.info(
+                        "    Stop %d: [%s] %s — %s",
+                        stop.order, stop.place_id, stop.name, stop.address,
+                    )
+
+            yield Event(
+                author=self.name,
+                actions=EventActions(state_delta={"itinerary": itinerary.model_dump()}),
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text="Itinerary finalised.")],
+                ),
+            )
+
+            predicted_state = {**ctx.session.state, "itinerary": itinerary.model_dump()}
+            logger.info(
+                "ItineraryAgent state after finalize itinerary was hit and processed: %s",
+                predicted_state,
+            )
+            return
+
+        # ── No confirmed places yet — ask the LLM to generate options ────────
+
+        # Fetch real candidates from Google Places API so the LLM picks from
+        # actual places with valid place_ids rather than hallucinating.
+        from ai.tools.maps import places_search
+
+        destination = persona_dict.get("destination", "Unknown")
+        persona_type = persona_dict.get("type", "adventurer")
+        candidates = await places_search(destination, persona_type, limit=10)
+        logger.info(
+            "Fetched %d candidate places from Google Places API for '%s' (persona=%s)",
+            len(candidates), destination, persona_type,
+        )
+
+        if candidates:
+            lines = []
+            for c in candidates:
+                lines.append(
+                    f"- place_id: {c['place_id']}  |  name: {c['name']}  |  address: {c['address']}"
+                )
+            candidates_section = "\n".join(lines)
+        else:
+            candidates_section = (
+                "No candidates were returned from the API. Use your own knowledge to suggest "
+                "well-known, popular tourist attractions for this destination. Use descriptive "
+                "placeholder IDs (e.g. 'cn_tower_toronto') since real place_ids are unavailable."
+            )
+
+        # Build system prompt, injecting candidates + refinement text.
         system_prompt = ITINERARY_SYSTEM_PROMPT.format(
-            destination=persona_dict.get("destination", "Unknown"),
+            destination=destination,
             duration=persona_dict.get("duration", "Unknown"),
             transit_preference=persona_dict.get("transit_preference", "Unknown"),
-            type=persona_dict.get("type", "Unknown"),
+            type=persona_type,
             pace=persona_dict.get("pace", "Unknown"),
             budget=persona_dict.get("budget", "Unknown"),
             notes=persona_dict.get("notes", ""),
             confirmed_section=_build_confirmed_section(confirmed),
             refinement_section=_build_refinement_section(refinement_text),
+            candidates_section=candidates_section,
         )
 
         # Reconstruct conversation history so the model sees prior context.

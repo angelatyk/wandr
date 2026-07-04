@@ -4,7 +4,7 @@ import os
 
 class Settings(BaseSettings):
     gemini_api_key: str | None = None
-    google_places_api_key: str = ""
+    google_maps_api_key: str = ""
     model_name: str = "gemini-2.5-flash"
 
     class Config:

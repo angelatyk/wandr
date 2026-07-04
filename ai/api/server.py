@@ -197,7 +197,7 @@ async def places_autocomplete(query: str):
         return {"suggestions": []}
     
     # Mock mode if no valid API key
-    if not settings.google_places_api_key or settings.google_places_api_key in {"", "mock-places-key", "your_google_places_api_key_here"}:
+    if not settings.google_maps_api_key or settings.google_maps_api_key in {"", "mock-places-key", "your_google_maps_api_key_here"}:
         mock_cities = ["Tokyo, Japan", "Toronto, Canada", "Paris, France", "New York, USA", "London, UK", "Rome, Italy", "Sydney, Australia"]
         q_lower = query.lower()
         suggestions = [c for c in mock_cities if q_lower in c.lower()]
@@ -210,7 +210,7 @@ async def places_autocomplete(query: str):
     payload = json.dumps({"input": query})
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_places_api_key,
+        "X-Goog-Api-Key": settings.google_maps_api_key,
     }
 
     def _post():

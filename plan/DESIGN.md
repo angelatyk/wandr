@@ -437,7 +437,7 @@ gcloud run deploy wandr-api \
   --allow-unauthenticated \
   --min-instances=1 \
   --timeout=300 \
-  --set-secrets="GOOGLE_PLACES_API_KEY=google-places-api-key:latest,GOOGLE_MAPS_API_KEY=google-maps-api-key:latest,GOOGLE_TTS_API_KEY=google-tts-api-key:latest"
+  --set-secrets="GOOGLE_MAPS_API_KEY=google-maps-api-key:latest,GOOGLE_TTS_API_KEY=google-tts-api-key:latest"
 ```
 
 `--min-instances=1` prevents cold starts during the demo. `--timeout=300` gives the pipeline enough time to complete.
