@@ -13,6 +13,7 @@ from ai.tools.exceptions import MapsAPIError, PlaceNotFoundError
 logger = logging.getLogger(__name__)
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+PLACES_AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete"
 PLACES_DETAILS_URL = "https://places.googleapis.com/v1/places/{place_id}"
 PLACE_PHOTO_URL = "https://places.googleapis.com/v1/{photo_name}/media"
 MAPS_DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
@@ -512,6 +513,32 @@ async def _fetch_places_search(query: str, page_size: int) -> dict[str, Any]:
     return await asyncio.to_thread(_post)
 
 
+async def _fetch_places_autocomplete(query: str) -> dict[str, Any]:
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": settings.google_places_api_key,
+    }
+    body = json.dumps(
+        {
+            "input": query,
+            "languageCode": "en",
+        }
+    ).encode()
+
+    def _post() -> dict[str, Any]:
+        request = urllib.request.Request(PLACES_AUTOCOMPLETE_URL, headers=headers, data=body, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode(errors="replace")
+            raise MapsAPIError(f"Places Autocomplete API error {exc.code}: {body_text}") from exc
+        except urllib.error.URLError as exc:
+            raise MapsAPIError(f"Places Autocomplete request failed: {exc}") from exc
+
+    return await asyncio.to_thread(_post)
+
+
 def _search_queries(destination: str, persona_type: str) -> tuple[str, ...]:
     persona_queries = _PERSONA_SEARCH_QUERIES.get(persona_type, ())
     base = tuple(query.format(destination=destination) for query in persona_queries)
@@ -529,17 +556,18 @@ async def autocomplete_places(query: str, limit: int = 5) -> list[str]:
         return [normalized_query]
 
     try:
-        payload = await _fetch_places_search(normalized_query, limit)
+        payload = await _fetch_places_autocomplete(normalized_query)
     except MapsAPIError as exc:
         logger.warning("Places autocomplete failed for query=%r (%s)", normalized_query, exc)
         return [normalized_query]
 
     suggestions: list[str] = []
     seen: set[str] = set()
-    for place_payload in payload.get("places", []):
-        name = (place_payload.get("displayName") or {}).get("text") or ""
-        address = place_payload.get("formattedAddress") or ""
-        label = ", ".join(part for part in (name, address) if part)
+    for suggestion_payload in payload.get("suggestions", []):
+        prediction = suggestion_payload.get("placePrediction") or {}
+        text_obj = prediction.get("text") or {}
+        label = text_obj.get("text") or ""
+
         if not label or label in seen:
             continue
         seen.add(label)
