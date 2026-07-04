@@ -1,3 +1,4 @@
+import logging
 from typing import AsyncGenerator
 
 from google.adk.agents import BaseAgent
@@ -7,41 +8,96 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.genai import types
 
 from ai.models.route import RouteModel, RouteStop
+from ai.models.trip import ItineraryModel, StopModel
+from ai.tools.maps import get_directions, get_place_details
 
-LOGISTICS_PROMPT = "MOCK LOGISTICS PROMPT"
+logger = logging.getLogger(__name__)
+
+# Tokyo fallback when place details have no coordinates (e.g. LLM-generated place IDs)
+_DEFAULT_LAT = 35.6812
+_DEFAULT_LNG = 139.7671
+
+
+async def run_logistics(itinerary: ItineraryModel) -> RouteModel:
+    """Order stops by day/order, attach map pins, sum walking times between legs."""
+    ordered: list[StopModel] = sorted(
+        (stop for day in itinerary.days for stop in day.stops),
+        key=lambda s: (s.day, s.order),
+    )
+
+    if not ordered:
+        return RouteModel(stops=[], total_travel_min=0)
+
+    route_stops: list[RouteStop] = []
+    total_travel_min = 0
+
+    for index, stop in enumerate(ordered):
+        place = await get_place_details(stop.place_id)
+        lat = place.lat if place.lat is not None else _DEFAULT_LAT
+        lng = place.lng if place.lng is not None else _DEFAULT_LNG
+
+        travel_min = 0
+        if index > 0:
+            prev = ordered[index - 1]
+            leg = await get_directions(prev.place_id, stop.place_id)
+            travel_min = int(leg.get("duration_min", 0))
+            total_travel_min += travel_min
+
+        route_stops.append(
+            RouteStop(
+                place_id=stop.place_id,
+                order=index + 1,
+                travel_time_from_prev_min=travel_min,
+                lat=lat,
+                lng=lng,
+            )
+        )
+
+    logger.info(
+        "Route built for %s: %d stops, %d min total walking",
+        itinerary.destination,
+        len(route_stops),
+        total_travel_min,
+    )
+    return RouteModel(stops=route_stops, total_travel_min=total_travel_min)
 
 
 class LogisticsAgent(BaseAgent):
+    """Builds ordered route + map pins after stop processing completes."""
+
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
-        print("arrived at logistics agent")
+        if ctx.session.state.get("route"):
+            logger.debug("LogisticsAgent skipping — route already in state.")
+            return
 
-        route = RouteModel(
-            stops=[
-                RouteStop(
-                    place_id="sensoji_id",
-                    order=1,
-                    travel_time_from_prev_min=0,
-                    lat=35.7147,
-                    lng=139.7967,
+        itinerary_dict = ctx.session.state.get("itinerary")
+        if not itinerary_dict:
+            logger.warning("LogisticsAgent called but itinerary is missing from state.")
+            yield Event(
+                author=self.name,
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text="Logistics skipped: no itinerary in session state.")],
                 ),
-                RouteStop(
-                    place_id="edo_museum_id",
-                    order=2,
-                    travel_time_from_prev_min=15,
-                    lat=35.6963,
-                    lng=139.7964,
-                ),
-            ],
-            total_travel_min=15,
-        )
+            )
+            return
 
-        # Use state_delta so the runner flushes this write to the session service
+        itinerary = ItineraryModel.model_validate(itinerary_dict)
+        route = await run_logistics(itinerary)
+
         yield Event(
             author=self.name,
             actions=EventActions(state_delta={"route": route.model_dump()}),
             content=types.Content(
                 role="model",
-                parts=[types.Part(text="Logistics route optimization completed.")],
+                parts=[
+                    types.Part(
+                        text=(
+                            f"Route ready: {len(route.stops)} stops, "
+                            f"{route.total_travel_min} min walking between them."
+                        )
+                    )
+                ],
             ),
         )
 

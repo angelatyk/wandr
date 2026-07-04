@@ -16,6 +16,24 @@
 
 ---
 
+## Current integration status
+
+This file is currently serving as the active in-repo tracker for the backend data-integration work.
+
+Done in the latest tranche:
+- `places_search(...)` now uses Google Places Text Search through the tool layer, with mock fallbacks for local development.
+- Photo support now exists in the tool layer via Places photo media lookups, and itinerary options can carry a real `photo_url`.
+- The itinerary agent now grounds option generation on tool-fetched candidates instead of Gemini Google Search, then normalizes output back onto stable tool-backed `place_id` values.
+- Finalized itineraries are now built from confirmed options so `place_id`, `name`, and `address` stay stable into Stop Research, Narrator, and Logistics.
+- `get_place_details(...)` now requests coordinates from Places so real `place_id` values can flow into downstream map work.
+
+Still remaining:
+- No caching or persistent place-data table has been added yet.
+- Directions and route timing are still mock-backed.
+- The itinerary flow still needs broader live-key validation across more destinations/personas after the current tranche.
+
+---
+
 ## Agent architecture
 
 ### How state flows

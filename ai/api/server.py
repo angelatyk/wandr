@@ -11,6 +11,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai.types import Content, Part
 
+from ai.config.settings import settings
 from ai.agents.orchestrator import orchestrator_agent
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.events import PipelineEvent
@@ -18,13 +19,15 @@ from ai.models.events import PipelineEvent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+
 app = FastAPI(title="Wandr API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -167,9 +170,10 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
 
     except Exception as e:
         logger.error("Pipeline error for plan %s: %s", plan_id, e, exc_info=True)
+        # Do not forward raw exception text to clients — may contain API paths or keys
         await queue.put(PipelineEvent(
             type="error",
-            data={"message": str(e)},
+            data={"message": "Pipeline failed. Please try again or adjust your request."},
             progress=100
         ).model_dump())
 
@@ -232,12 +236,20 @@ async def select_places(plan_id: str, body: SelectRequest):
     confirmed_places: list[dict] = []
     confirmed_ids = set(body.confirmed_place_ids)
     for day in options_dict.get("days", []):
-        for place in day.get("options", []):
+        for order, place in enumerate(day.get("options", []), start=1):
             if place.get("place_id") in confirmed_ids:
                 confirmed_places.append({
                     "place_id": place["place_id"],
                     "name": place["name"],
+                    "address": place.get("address", "Unknown"),
+                    "photo_url": place.get("photo_url", ""),
+                    "suggested_duration": place.get("suggested_duration", ""),
+                    "description": place.get("description", ""),
+                    "must_see": place.get("must_see", False),
+                    "hours_of_operation": place.get("hours_of_operation", "Unknown"),
+                    "persona_note": place.get("persona_note", ""),
                     "day": day["day"],
+                    "order": order,
                 })
 
     logger.info(
@@ -255,6 +267,7 @@ async def select_places(plan_id: str, body: SelectRequest):
             state_delta={
                 "itinerary_options_confirmed": confirmed_places,
                 "itinerary_refinement_text": body.refinement_text,
+                "itinerary_action": body.action,
                 "itinerary_options": None
             }
         )
