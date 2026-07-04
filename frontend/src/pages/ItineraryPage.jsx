@@ -146,7 +146,10 @@ export default function ItineraryPage() {
       <main className="flex-1 flex flex-col md:flex-row pt-20 h-screen w-full relative">
 
         {/* Left — scrollable timeline */}
-        <section className="w-full md:w-5/12 lg:w-1/3 bg-surface-white h-full overflow-y-auto no-scrollbar px-5 md:px-8 py-6 flex flex-col gap-10 z-10 relative pb-40">
+        <section
+          className="w-full md:w-5/12 lg:w-1/3 bg-surface-white overflow-y-auto no-scrollbar px-5 md:px-8 py-6 flex flex-col gap-10 z-10 relative pb-40"
+          style={{ height: 'calc(100vh - 5rem)' }}
+        >
           
           {!itinerary ? (
             <div className="flex flex-col items-center justify-center py-24 gap-6 text-center">
@@ -212,7 +215,10 @@ export default function ItineraryPage() {
         </section>
 
         {/* Right — map */}
-        <section className="hidden md:block w-7/12 lg:w-2/3 h-full relative bg-surface-container">
+        <section
+          className="hidden md:block w-7/12 lg:w-2/3 relative bg-surface-container"
+          style={{ height: 'calc(100vh - 5rem)' }}
+        >
           <div className="absolute inset-0 w-full h-full">
             <MapRoute
               route={route}
