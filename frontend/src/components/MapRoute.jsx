@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps'
 
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.GOOGLE_JS_API_KEY
+const API_KEY = import.meta.env.VITE_GOOGLE_CLOUD_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.GOOGLE_JS_API_KEY
 
 function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.8, strokeWeight = 3 }) {
   const map = useMap()
@@ -31,13 +31,15 @@ function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.8, strokeWe
   return null
 }
 
-function LegacyMarker({ position, title, labelText, onClick }) {
+function LegacyMarker({ position, title, labelText, onClick, isActive }) {
   const map = useMap()
+  const [marker, setMarker] = useState(null)
+  const [infoWindow, setInfoWindow] = useState(null)
 
   useEffect(() => {
     if (!map || !window.google?.maps) return
 
-    const marker = new window.google.maps.Marker({
+    const m = new window.google.maps.Marker({
       position,
       map,
       title,
@@ -46,6 +48,7 @@ function LegacyMarker({ position, title, labelText, onClick }) {
         color: '#FFFFFF',
         fontWeight: 'bold',
         fontSize: '13px',
+        fontFamily: "'Inter', sans-serif",
       },
       icon: {
         path: window.google.maps.SymbolPath.CIRCLE,
@@ -56,15 +59,39 @@ function LegacyMarker({ position, title, labelText, onClick }) {
         strokeWeight: 2.5,
       },
     })
+    setMarker(m)
 
     let listener = null
-    if (onClick) listener = marker.addListener('click', onClick)
+    if (onClick) listener = m.addListener('click', onClick)
 
     return () => {
       if (listener) listener.remove()
-      marker.setMap(null)
+      m.setMap(null)
     }
   }, [map, onClick, position, title, labelText])
+
+  useEffect(() => {
+    if (!marker || !window.google?.maps) return
+
+    const iw = new window.google.maps.InfoWindow({
+      content: `<div class="custom-info-window">${title}</div>`,
+      disableAutoPan: true,
+    })
+    setInfoWindow(iw)
+
+    return () => {
+      iw.close()
+    }
+  }, [marker, title])
+
+  useEffect(() => {
+    if (!infoWindow || !marker || !map) return
+    if (isActive) {
+      infoWindow.open({ anchor: marker, map })
+    } else {
+      infoWindow.close()
+    }
+  }, [isActive, infoWindow, marker, map])
 
   return null
 }
@@ -83,7 +110,21 @@ function BoundsController({ stops }) {
   return null
 }
 
-export default function MapRoute({ route, stops = [], onPinClick }) {
+function MapPanController({ activeStopId, validRouteStops }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!map || !activeStopId || !validRouteStops?.length) return
+    const stop = validRouteStops.find(s => s.place_id === activeStopId)
+    if (stop) {
+      map.panTo({ lat: stop.lat, lng: stop.lng })
+    }
+  }, [map, activeStopId, validRouteStops])
+
+  return null
+}
+
+export default function MapRoute({ route, stops = [], onPinClick, activeStopId }) {
   const validRouteStops = (route?.stops ?? []).filter(
     (stop) => typeof stop.lat === 'number' && typeof stop.lng === 'number'
   )
@@ -100,7 +141,7 @@ export default function MapRoute({ route, stops = [], onPinClick }) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-surface-container">
         <p className="text-on-surface-muted text-sm">
-          Map unavailable — set `GOOGLE_JS_API_KEY` or `VITE_GOOGLE_MAPS_API_KEY`.
+          Map unavailable — set `VITE_GOOGLE_CLOUD_API_KEY`.
         </p>
       </div>
     )
@@ -123,6 +164,7 @@ export default function MapRoute({ route, stops = [], onPinClick }) {
           style={{ width: '100%', height: '100%' }}
         >
           {validRouteStops.length > 0 && <BoundsController stops={validRouteStops} />}
+          <MapPanController activeStopId={activeStopId} validRouteStops={validRouteStops} />
 
           {path.length > 1 && <Polyline path={path} />}
 
@@ -135,6 +177,7 @@ export default function MapRoute({ route, stops = [], onPinClick }) {
                 onClick={() => handleClick(stop.place_id)}
                 title={stopName}
                 labelText={String(index + 1)}
+                isActive={activeStopId === stop.place_id}
               />
             )
           })}

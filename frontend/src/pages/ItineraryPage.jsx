@@ -52,7 +52,10 @@ export default function ItineraryPage() {
     label: `Day ${day.day}`,
     stops: day.stops.map((stop, idx) => {
       const audio = audioStops.find((item) => item.place_id === stop.place_id)
-      const routeStop = route?.stops?.find((item) => item.place_id === stop.place_id)
+      const validRouteStops = (route?.stops ?? []).filter((s) => typeof s.lat === 'number' && typeof s.lng === 'number')
+      const routeStop = validRouteStops.find((item) => item.place_id === stop.place_id)
+      const globalIdx = validRouteStops.findIndex((s) => s.place_id === stop.place_id)
+      const stopNumber = globalIdx !== -1 ? globalIdx + 1 : idx + 1
 
       let transit = null
       if (routeStop && routeStop.travel_time_from_prev_min > 0) {
@@ -67,7 +70,7 @@ export default function ItineraryPage() {
         name: stop.name,
         description: audio ? audio.script : 'Narration is being generated...',
         image: imageMap[stop.place_id] || 'https://via.placeholder.com/800x600?text=Stop',
-        time: `Stop ${idx + 1}`,
+        time: `Stop ${stopNumber}`,
         personaIcon: 'park',
         narrationLength: audio ? `${Math.max(1, Math.round(audio.duration_sec / 60))} min` : '...',
         included: true,
@@ -169,6 +172,7 @@ export default function ItineraryPage() {
                           variant="itinerary"
                           active={nowPlaying?.stopId === stop.id || activeStopId === stop.id}
                           onPlay={() => handlePlay(stop)}
+                          onViewMap={() => handlePinClick(stop.id)}
                         />
 
                         {stop.transit && (
@@ -197,6 +201,7 @@ export default function ItineraryPage() {
               route={route}
               stops={displayDays.flatMap((day) => day.stops)}
               onPinClick={handlePinClick}
+              activeStopId={activeStopId}
             />
           </div>
 

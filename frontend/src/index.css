@@ -178,3 +178,42 @@ select,
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
+/* ── Custom Map InfoWindow overrides ── */
+.gm-style-iw-c {
+  padding: 12px !important;
+  border-radius: 12px !important;
+  box-shadow: var(--shadow-raised) !important;
+  border: 2px solid var(--wandr-secondary) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+.gm-style-iw-d {
+  overflow: hidden !important;
+  padding: 0 !important;
+  max-height: none !important;
+  font-family: var(--font-body) !important;
+  color: var(--wandr-primary) !important;
+}
+.gm-style-iw-d a {
+  color: var(--wandr-secondary) !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+}
+.gm-style-iw-d a:hover {
+  text-decoration: underline !important;
+}
+.gm-ui-hover-effect,
+.gm-style-iw-ch {
+  display: none !important; /* Hide close button and empty header space */
+}
+.custom-info-window {
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  display: block;
+  line-height: 1.2;
+  margin: 0;
+  padding: 0;
+}

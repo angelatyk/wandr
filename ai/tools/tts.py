@@ -23,7 +23,7 @@ from ai.tools.exceptions import TTSError
 logger = logging.getLogger(__name__)
 
 TTS_SYNTH_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
-_MOCK_TTS_KEYS = {"", "mock-tts-key", "your-tts-api-key"}
+_MOCK_TTS_KEYS = {"", "mock-tts-key", "your-tts-api-key", "mock-google-cloud-key", "your-google-cloud-api-key"}
 _MOCK_GCS_BUCKETS = {"", "mock-bucket", "your-gcs-bucket-name"}
 _GCS_AUTH_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
@@ -66,7 +66,7 @@ def _voice_config(voice_style: str) -> dict[str, object]:
 
 
 def _uses_mock_tts() -> bool:
-    return settings.google_tts_api_key.strip() in _MOCK_TTS_KEYS
+    return settings.google_cloud_api_key.strip() in _MOCK_TTS_KEYS
 
 
 def _uses_gcs_storage() -> bool:
@@ -222,7 +222,7 @@ async def generate_audio(script: str, voice_style: str) -> str:
 
     if _uses_mock_tts():
         raise TTSError(
-            "GOOGLE_TTS_API_KEY is not configured. Set a real Google Cloud TTS key in .env."
+            "GOOGLE_CLOUD_API_KEY is not configured. Set a real Google Cloud API key in .env."
         )
 
     audio_bytes = await _synthesize_audio_bytes(script, voice_style)

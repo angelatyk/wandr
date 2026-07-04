@@ -37,6 +37,22 @@ export default function HomePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentBgIndex, setCurrentBgIndex] = useState(0);
 
+  const isVibeActive = vibe.trim().length > 0;
+  const isStructuredActive =
+    destination.trim().length > 0 ||
+    duration.trim().length > 0 ||
+    currentLocation.trim().length > 0 ||
+    selectedPersona !== null;
+
+  const handleClearVibe = () => setVibe("");
+  const handleClearStructured = () => {
+    setCurrentLocation("");
+    setDestination("");
+    setDuration("");
+    setSelectedPersona(null);
+    setTransitPreference("walking");
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentBgIndex((prev) => (prev + 1) % HERO_IMAGES.length);
@@ -146,14 +162,21 @@ export default function HomePage() {
               className="glass rounded-2xl p-6 flex flex-col gap-4 max-w-2xl shadow-[var(--shadow-overlay)]"
             >
               {/* Natural language input */}
-              <div className="flex flex-col gap-2">
-                <label
-                  htmlFor="vibe"
-                  className="text-xs font-semibold uppercase tracking-widest text-on-surface-muted"
-                  style={{ fontFamily: "var(--font-body)" }}
-                >
-                  Tell us your vibe
-                </label>
+              <div className={`flex flex-col gap-2 transition-all duration-300 relative ${isStructuredActive ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                <div className="flex justify-between items-end">
+                  <label
+                    htmlFor="vibe"
+                    className="text-xs font-semibold uppercase tracking-widest text-on-surface-muted"
+                    style={{ fontFamily: "var(--font-body)" }}
+                  >
+                    Tell us your vibe
+                  </label>
+                  {isVibeActive && (
+                    <button type="button" onClick={handleClearVibe} className="text-[10px] uppercase font-bold text-primary hover:text-primary-tint tracking-wider">
+                      Clear Vibe
+                    </button>
+                  )}
+                </div>
                 <div className="relative flex items-start bg-surface-white rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors overflow-hidden">
                   <span className="material-symbols-outlined text-outline ml-2 mt-4 flex-shrink-0 text-[20px]">
                     auto_awesome
@@ -164,7 +187,8 @@ export default function HomePage() {
                     placeholder="Describe your perfect trip, tell me where you want to explore, or use the fields below."
                     value={vibe}
                     onChange={(e) => setVibe(e.target.value)}
-                    className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-4 px-3 resize-none"
+                    disabled={isStructuredActive}
+                    className="w-full bg-transparent border-none focus:outline-none disabled:text-outline text-base text-on-surface placeholder:text-outline py-4 px-3 resize-none"
                     style={{ fontFamily: "var(--font-body)" }}
                   />
                 </div>
@@ -183,7 +207,14 @@ export default function HomePage() {
               </div>
 
               {/* Structured fields */}
-              <div className="flex flex-col gap-3">
+              <div className={`flex flex-col gap-3 transition-all duration-300 relative ${isVibeActive ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                {isStructuredActive && (
+                  <div className="absolute -top-7 right-0 z-10">
+                    <button type="button" onClick={handleClearStructured} className="text-[10px] uppercase font-bold text-primary hover:text-primary-tint tracking-wider">
+                      Clear Fields
+                    </button>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {/* Location Fields Column */}
                   <div className="flex-1 flex flex-col gap-3 min-w-0">
@@ -223,7 +254,8 @@ export default function HomePage() {
                       placeholder="Type here..."
                       value={duration}
                       onChange={(e) => setDuration(e.target.value)}
-                      className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-1 pl-[28px]"
+                      disabled={isVibeActive}
+                      className="w-full bg-transparent border-none focus:outline-none disabled:text-outline text-base text-on-surface placeholder:text-outline py-1 pl-[28px]"
                       style={{ fontFamily: "var(--font-body)" }}
                       autoComplete="off"
                     />
@@ -275,15 +307,17 @@ export default function HomePage() {
         </section>
 
         {/* ── Persona Grid ── */}
-        <PersonaGrid
-          personas={PERSONAS}
-          selectedPersona={selectedPersona}
-          onSelectPersona={(id) =>
-            setSelectedPersona((prev) => (prev === id ? null : id))
-          }
-          onContinue={handleQuickWander}
-          isLoading={isLoading}
-        />
+        <div className={`transition-all duration-300 ${isVibeActive ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+          <PersonaGrid
+            personas={PERSONAS}
+            selectedPersona={selectedPersona}
+            onSelectPersona={(id) =>
+              setSelectedPersona((prev) => (prev === id ? null : id))
+            }
+            onContinue={handleQuickWander}
+            isLoading={isLoading}
+          />
+        </div>
       </main>
 
       <Footer />
