@@ -166,10 +166,56 @@ async def get_place_details(place_id: str) -> PlaceDetails:
     return details
 
 
+DIRECTIONS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
+
+async def _fetch_directions(origin_place_id: str, destination_place_id: str, mode: str) -> dict[str, Any]:
+    params = urllib.parse.urlencode({
+        "origin": f"place_id:{origin_place_id}",
+        "destination": f"place_id:{destination_place_id}",
+        "mode": mode,
+        "key": settings.google_maps_api_key,
+    })
+    url = f"{DIRECTIONS_API_URL}?{params}"
+
+    def _get() -> dict[str, Any]:
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.URLError as exc:
+            raise MapsAPIError(f"Directions API request failed: {exc}") from exc
+
+    return await asyncio.to_thread(_get)
+
 async def get_directions(
     origin_place_id: str,
     destination_place_id: str,
     mode: str = "walking",
 ) -> dict:
-    """Fetch travel distance and time between places."""
-    return {}
+    """Fetch travel distance, time, and coordinates between places."""
+    if not origin_place_id or not destination_place_id:
+        return {"distance_meters": 0, "duration_seconds": 0, "lat": 0.0, "lng": 0.0}
+
+    if _uses_mock_places():
+        logger.info("Using mock directions for %s to %s", origin_place_id, destination_place_id)
+        # return dummy travel info
+        import random
+        return {
+            "distance_meters": random.randint(500, 3000),
+            "duration_seconds": random.randint(300, 1800),
+            "lat": 35.6895 + random.uniform(-0.01, 0.01),
+            "lng": 139.6917 + random.uniform(-0.01, 0.01),
+        }
+
+    payload = await _fetch_directions(origin_place_id, destination_place_id, mode)
+    if payload.get("status") != "OK" or not payload.get("routes"):
+        logger.warning("Directions API failed or no route: %s", payload.get("status"))
+        return {"distance_meters": 0, "duration_seconds": 0, "lat": 0.0, "lng": 0.0}
+    
+    leg = payload["routes"][0]["legs"][0]
+    return {
+        "distance_meters": leg.get("distance", {}).get("value", 0),
+        "duration_seconds": leg.get("duration", {}).get("value", 0),
+        "lat": leg.get("end_location", {}).get("lat", 0.0),
+        "lng": leg.get("end_location", {}).get("lng", 0.0),
+    }
