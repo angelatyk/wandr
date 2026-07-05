@@ -61,11 +61,6 @@ You are given factual candidate places already fetched from Google Places.
 Use ONLY these candidates. Do not use outside knowledge, do not invent new places,
 and do not change a place_id.
 
-You operate in two modes:
-
-### Mode 1 — Present Options
-Use this mode unless the user explicitly says they are ready to finalise.
-
 Output ONLY a raw JSON object (no markdown fences, no commentary) that matches
 this schema exactly:
 {{
@@ -105,32 +100,6 @@ Also:
 
 ## Duration rules (STRICT — enforced by the system)
 {duration_rules}
-
-### Mode 2 — Finalise Itinerary
-Use this mode ONLY when the user's most recent message explicitly confirms they
-are done selecting (e.g. "Finalize my itinerary", "I'm happy with these").
-
-Output ONLY a raw JSON object matching this schema:
-{{
-  "mode": "final",
-  "data": {{
-    "destination": "<destination>",
-    "days": [
-      {{
-        "day": 1,
-        "stops": [
-          {{
-            "place_id": "<same id from options>",
-            "name": "<place name>",
-            "address": "<address>",
-            "photo_url": "<copy from candidate or confirmed place>",
-            "day": 1,
-            "order": 1
-          }}
-        ]
-      }}
-    ]
-  }}
 }}
 """
 
@@ -810,49 +779,6 @@ class ItineraryAgent(BaseAgent):
                     parts=[types.Part(text=options_json)],
                 ),
             )
-
-        elif mode == "final" and inner_data:
-            try:
-                itinerary = ItineraryModel.model_validate(inner_data)
-            except ValidationError as exc:
-                logger.error("ItineraryModel validation failed: %s", exc)
-                yield Event(
-                    author=self.name,
-                    content=types.Content(role="model", parts=[types.Part(text=raw)]),
-                )
-                return
-
-            itinerary = _enforce_final_itinerary(itinerary, parsed)
-            session_photos = dict(ctx.session.state.get("place_photos") or {})
-            photos = {**session_photos, **_photo_lookup(confirmed, search_candidates)}
-            itinerary = _enrich_itinerary_photos(itinerary, photos)
-
-            logger.info("Itinerary finalised for '%s' (%d days):", itinerary.destination, len(itinerary.days))
-            for day in itinerary.days:
-                logger.info("  Day %d — %d stops:", day.day, len(day.stops))
-                for stop in day.stops:
-                    logger.info(
-                        "    Stop %d: [%s] %s — %s",
-                        stop.order, stop.place_id, stop.name, stop.address,
-                    )
-
-            yield Event(
-                author=self.name,
-                actions=EventActions(
-                    state_delta={
-                        "itinerary": itinerary.model_dump(),
-                        "tool_usage": updated_usage.model_dump(),
-                    }
-                ),
-                content=types.Content(
-                    role="model",
-                    parts=[types.Part(text="Itinerary finalised.")],
-                ),
-            )
-
-            # Log predicted state after applying the state delta
-            predicted_state = {**ctx.session.state, "itinerary": itinerary.model_dump()}
-            logger.info("ItineraryAgent state after finalize itinerary was hit and processed: %s", predicted_state)
 
         else:
             logger.warning(

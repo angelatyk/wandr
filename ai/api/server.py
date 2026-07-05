@@ -425,6 +425,30 @@ async def reply_plan(plan_id: str, request: TripRequest):
     if plan_id not in pipeline_queues:
         pipeline_queues[plan_id] = asyncio.Queue()
     queue = pipeline_queues[plan_id]
+
+    # Clear any stale finalised state so agents don't skip themselves when
+    # the user is replying with a new clarification or starting a fresh run.
+    # Without this, ItineraryAgent sees a non-null 'itinerary' and returns early,
+    # and LogisticsAgent sees a non-null 'route' and does the same.
+    current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    if current_session is not None:
+        stale_keys = ("itinerary", "route", "audio_scripts", "itinerary_action",
+                      "itinerary_options", "itinerary_options_confirmed", "itinerary_refinement_text")
+        stale_state = {k: None for k in stale_keys if current_session.state.get(k) is not None}
+        if stale_state:
+            from google.adk.events import Event as _Event, EventActions as _EventActions
+            await session_service.append_event(
+                session=current_session,
+                event=_Event(
+                    author="system",
+                    actions=_EventActions(state_delta=stale_state),
+                ),
+            )
+            logger.info(
+                "reply_plan: cleared stale state keys %s for plan %s",
+                list(stale_state.keys()), plan_id,
+            )
+
     asyncio.create_task(run_pipeline(plan_id, request, queue))
     return {"plan_id": plan_id}
 
@@ -458,10 +482,18 @@ async def select_places(plan_id: str, body: SelectRequest):
     pipeline_queues[plan_id] = queue
 
     # Pull the current session so we can update state before re-running.
+    # If the in-memory session is gone (e.g. server restarted), restore it
+    # from the disk snapshot so we can read itinerary_options and proceed.
     current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
     if current_session is None:
-        logger.error("select_places: session %s not found.", plan_id)
-        return {"error": "Session not found"}, 404
+        logger.warning(
+            "select_places: in-memory session %s not found — attempting snapshot restore.", plan_id
+        )
+        await _ensure_plan_session(plan_id)
+        current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    if current_session is None:
+        logger.error("select_places: session %s could not be restored.", plan_id)
+        raise HTTPException(status_code=404, detail="Plan session not found. Please start over.")
 
     # Build confirmed place list from the stored options and the user's selection.
     options_dict = current_session.state.get("itinerary_options", {})
@@ -507,6 +539,8 @@ async def select_places(plan_id: str, body: SelectRequest):
     # Update session state properly by appending an event with a state_delta.
     # This persists the confirmed places and refinement text, and explicitly deletes
     # the stale itinerary_options so the pipeline doesn't immediately replay them.
+    # We also MUST clear itinerary, route, and audio_scripts so that if the user
+    # went "Back" from a finalized plan to refine again, the agents don't skip themselves.
     from google.adk.events import Event, EventActions
     update_event = Event(
         author="system",
@@ -516,7 +550,10 @@ async def select_places(plan_id: str, body: SelectRequest):
                 "itinerary_refinement_text": body.refinement_text,
                 "itinerary_action": body.action,
                 "place_photos": place_photos,
-                "itinerary_options": None
+                "itinerary_options": None,
+                "itinerary": None,
+                "route": None,
+                "audio_scripts": None,
             }
         )
     )

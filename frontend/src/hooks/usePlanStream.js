@@ -33,10 +33,16 @@ export function usePlanStream(planId) {
       if (es) es.close()
     }
 
-    const connect = () => {
+    const connect = (isReconnect = false) => {
       gracefulCloseRef.current = false
       // Close any existing connection before reopening
       if (es) es.close()
+
+      if (isReconnect) {
+        setItinerary(null)
+        setRoute(null)
+        setStops([])
+      }
 
       es = new EventSource(`/api/plan/${planId}/stream`)
 
@@ -120,7 +126,7 @@ export function usePlanStream(planId) {
     }
 
     // Wire the reconnect function so callers can re-open the stream
-    reconnectRef.current = connect
+    reconnectRef.current = () => connect(true)
     connect()
 
     return () => {

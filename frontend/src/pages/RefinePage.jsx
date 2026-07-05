@@ -6,10 +6,15 @@ const BG_IMAGE =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuBp84ZOjCpvluLOY7ZPL2dz4sa1qgsmt9eva8l3TOOkZCNgxmEySmGTNDs1NmbmIA1wE8M7h7b1ssWWtlH3MYdME3K5VGDNH0nry6dmayVzYPyhFpHZHVVBka7hqRTqZLFr-q2dz3upp95oO4fXrmOhIwyzzqLanl-Xxs2xIDFPiMAUFTpcUrlvGwVW3-sbqbSQKqllFxsMWYDujsb6CHXydtsPm4kUvnE5PEiFYqW6T72EGcVd9umT9Y9z_w-4mmBiOYYNPPP9JrjF'
 
 /**
- * RefinePage — AI profiler clarification form.
+ * RefinePage — profiler clarification form.
  *
- * Step 2 of 3 in the onboarding flow.
- * Background: full-bleed travel photo fading to surface colour.
+ * This page appears when the profiler agent needs more information before
+ * it can build a persona (e.g. missing destination, duration, or travel style).
+ * The user's reply is sent to /api/plan/:id/reply so the profiler can finish
+ * its profiling and hand off to the itinerary agent.
+ *
+ * Itinerary refinement (after options are shown) is handled by the refine
+ * textarea on VerifyPage — not here.
  *
  * Gradient overlays use inline rgba() values because Tailwind v4 does not
  * support the `color/opacity` shorthand for CSS-variable-based colours.
@@ -19,9 +24,9 @@ export default function RefinePage() {
   const [searchParams] = useSearchParams()
   const planId = searchParams.get('planId')
 
-  // Subscribe to the backend SSE stream to monitor pipeline progress
+  // Subscribe to the backend SSE stream to monitor pipeline progress.
   const { status, clarification, errorMessage } = usePlanStream(planId)
-  
+
   const [reply, setReply] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -30,8 +35,8 @@ export default function RefinePage() {
       navigate('/')
       return
     }
-    // Advance only once itinerary options exist — stay on this page while the
-    // profiler/itinerary agents run so we don't mount VerifyPage too early.
+    // Advance to VerifyPage once itinerary options exist — stay here while the
+    // profiler/itinerary agents are running so we don't mount VerifyPage too early.
     if (
       status === 'awaiting_selection' ||
       status === 'finalised' ||
@@ -44,16 +49,15 @@ export default function RefinePage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!reply) return
-    
+    if (!reply.trim()) return
     setSubmitting(true)
     try {
       await fetch(`/api/plan/${planId}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vibe: reply }) // We send the reply as vibe/context
+        body: JSON.stringify({ vibe: reply }),
       })
-      // Reload page to re-establish SSE stream connection
+      // Reload to re-establish the SSE stream from the beginning of this plan.
       window.location.reload()
     } catch (err) {
       console.error(err)
@@ -136,7 +140,7 @@ export default function RefinePage() {
                 ? (errorMessage || 'A temporary issue interrupted planning. Please retry from home.')
                 : 'To curate the perfect itinerary, I need a little more direction on your upcoming journey.'}
           </p>
-          
+
           {isLoading && (
             <div className="mt-8">
                <span className="material-symbols-outlined text-4xl text-primary animate-spin">sync</span>
@@ -144,7 +148,7 @@ export default function RefinePage() {
           )}
         </header>
 
-        {/* ── Form card ── */}
+        {/* ── Form card — only shown when the profiler needs a clarification ── */}
         {!isLoading && status === 'needs_clarification' && (
           <form
             onSubmit={handleSubmit}

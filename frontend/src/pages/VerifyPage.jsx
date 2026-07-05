@@ -45,7 +45,7 @@ export default function VerifyPage() {
   const [searchParams] = useSearchParams()
   const planId = searchParams.get('planId')
 
-  const { itineraryOptions, status, errorMessage, persona, reconnect } = usePlanStream(planId)
+  const { itineraryOptions, itinerary, route, status, errorMessage, persona, reconnect } = usePlanStream(planId)
 
   // confirmed: Set of place_ids the user has toggled ON
   const [confirmed, setConfirmed] = useState(new Set())
@@ -74,12 +74,34 @@ export default function VerifyPage() {
     setActionStatus(null)
   }, [itineraryOptions])
 
-  // Navigate to /itinerary once the route is finalized (even if narration is incomplete)
+  // Navigate to /itinerary only once BOTH the finalized itinerary AND the route
+  // are ready. Checking both values (not just status) prevents navigating on a
+  // stale 'routing'/'complete' replay before the finalize pipeline finishes.
   useEffect(() => {
-    if (status === 'complete' || status === 'routing') {
+    if (itinerary && route) {
       navigate(`/itinerary?planId=${planId}`)
     }
-  }, [status, navigate, planId])
+  }, [itinerary, route, navigate, planId])
+
+  // If the pipeline errors while we're waiting for finalize/refine, clear the
+  // loading state so the error UI is visible and the user can retry or go back.
+  useEffect(() => {
+    if (status === 'error') {
+      setActionStatus(null)
+      setSubmitting(false)
+    }
+  }, [status])
+
+  // Safety timeout — if we've been finalizing for more than 90 seconds without
+  // the route arriving, something went wrong server-side. Clear the stuck state.
+  useEffect(() => {
+    if (actionStatus !== 'finalizing') return
+    const timer = setTimeout(() => {
+      setActionStatus(null)
+      setSubmitting(false)
+    }, 90_000)
+    return () => clearTimeout(timer)
+  }, [actionStatus])
 
   const togglePlace = (placeId) => {
     setConfirmed((prev) => {
@@ -94,7 +116,7 @@ export default function VerifyPage() {
     setSubmitting(true)
     setActionStatus(action === 'refine' ? 'refining' : 'finalizing')
     try {
-      await fetch(`/api/plan/${planId}/select`, {
+      const res = await fetch(`/api/plan/${planId}/select`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -103,6 +125,7 @@ export default function VerifyPage() {
           action,
         }),
       })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setRefineText('')
       // Re-open the SSE stream to receive the updated itinerary_options
       // (refine) or the itinerary_done event (finalize).

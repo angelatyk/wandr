@@ -25,11 +25,12 @@ def _plan_path(plan_id: str) -> Path:
 def derive_plan_status(state: dict[str, Any]) -> PlanStatus:
     if state.get("pipeline_error"):
         return "error"
-    if state.get("itinerary"):
+    # A plan is only fully complete once logistics (route) and narration (audio_scripts) are done
+    if state.get("itinerary") and state.get("route") and state.get("audio_scripts"):
         return "complete"
     if state.get("itinerary_options"):
         return "awaiting_selection"
-    if state.get("persona"):
+    if state.get("persona") or state.get("itinerary"):
         return "planning"
     return "started"
 
