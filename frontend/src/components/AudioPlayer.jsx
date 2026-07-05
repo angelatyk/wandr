@@ -68,11 +68,27 @@ export default function AudioPlayer({ title, image, audioUrl, onClose }) {
     setProgress(100)
   }, [])
 
-  const handleAudioError = useCallback(() => {
+  const handleAudioError = useCallback(async () => {
     setLoading(false)
     setPlaying(false)
-    setError('Could not load narration audio. The clip may still be generating.')
-  }, [])
+
+    if (!audioUrl) {
+      setError('No narration audio is available for this stop.')
+      return
+    }
+
+    try {
+      const res = await fetch(audioUrl, { method: 'HEAD' })
+      if (res.status === 404) {
+        setError('Narration audio was not saved for this stop. Try re-running the trip or check TTS API key.')
+        return
+      }
+    } catch {
+      // Ignore network probe errors — fall through to generic message.
+    }
+
+    setError('Could not load narration audio. Check your connection or TTS API configuration.')
+  }, [audioUrl])
 
   const togglePlay = () => {
     const audio = audioRef.current

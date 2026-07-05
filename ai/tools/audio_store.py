@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def plan_audio_path(plan_id: str, place_id: str) -> Path:
 
 def plan_audio_api_url(plan_id: str, place_id: str) -> str:
     """Browser-playable API URL for a persisted narration clip."""
-    return f"/api/plan/{plan_id}/audio/{place_id}"
+    return f"/api/plan/{plan_id}/audio?place_id={quote(place_id, safe='')}"
 
 
 def _write_bytes(path: Path, audio_bytes: bytes) -> None:

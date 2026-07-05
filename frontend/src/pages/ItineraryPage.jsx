@@ -27,7 +27,7 @@ export default function ItineraryPage() {
   }
 
   const handlePlay = (stop) => {
-    if (!stop.audioUrl) return
+    if (!stop.hasAudio || !stop.audioUrl) return
     setActiveStopId(stop.id)
     setNowPlaying({
       stopId: stop.id,
@@ -79,7 +79,11 @@ export default function ItineraryPage() {
         included: true,
         transit,
         audioUrl: audio?.audio_url || null,
-        hasAudio: Boolean(audio?.audio_url),
+        hasAudio: Boolean(
+          audio?.audio_url &&
+          audio?.audio_source !== 'text_only' &&
+          !(audio?.script || '').startsWith('We could not generate narration')
+        ),
       }
     }),
   }))

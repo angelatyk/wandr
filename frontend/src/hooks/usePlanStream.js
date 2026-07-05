@@ -21,13 +21,20 @@ export function usePlanStream(planId) {
   // Expose an imperative "reconnect" so VerifyPage can re-open the stream
   // after sending a refine or finalize action.
   const reconnectRef = useRef(null)
+  const gracefulCloseRef = useRef(false)
 
   useEffect(() => {
     if (!planId) return
 
     let es = null
 
+    const closeStream = () => {
+      gracefulCloseRef.current = true
+      if (es) es.close()
+    }
+
     const connect = () => {
+      gracefulCloseRef.current = false
       // Close any existing connection before reopening
       if (es) es.close()
 
@@ -42,7 +49,7 @@ export function usePlanStream(planId) {
             setStatus('needs_clarification')
             setClarification(event.data.message)
             setErrorMessage(null)
-            es.close()
+            closeStream()
 
           } else if (event.type === 'profiler_done') {
             setStatus('planning')
@@ -55,13 +62,13 @@ export function usePlanStream(planId) {
             if (!Array.isArray(days) || days.length === 0) {
               setStatus('error')
               setErrorMessage('Itinerary options arrived without any places. Please retry.')
-              es.close()
+              closeStream()
               return
             }
             setStatus('awaiting_selection')
             setItineraryOptions(event.data)
             setErrorMessage(null)
-            es.close()
+            closeStream()
 
           } else if (event.type === 'itinerary_done') {
             setStatus('finalised')
@@ -81,23 +88,34 @@ export function usePlanStream(planId) {
           } else if (event.type === 'complete') {
             setStatus('complete')
             setErrorMessage(null)
-            es.close()
+            const state = event.data || {}
+            if (state.persona) setPersona(state.persona)
+            if (state.itinerary) setItinerary(state.itinerary)
+            if (state.route) setRoute(state.route)
+            if (state.itinerary_options) setItineraryOptions(state.itinerary_options)
+            if (Array.isArray(state.audio_scripts?.scripts) && state.audio_scripts.scripts.length > 0) {
+              setStops(state.audio_scripts.scripts)
+            }
+            closeStream()
 
           } else if (event.type === 'error') {
             setStatus('error')
             setErrorMessage(event.data?.message || 'The trip pipeline failed. Please try again.')
-            es.close()
+            closeStream()
           }
         } catch (err) {
           console.error('Error parsing SSE event:', err)
         }
       }
 
-      es.onerror = (err) => {
-        console.error('SSE Error:', err)
+      es.onerror = () => {
+        // EventSource fires onerror when the server closes after a normal pause
+        // (e.g. itinerary_options) — do not treat that as a failure.
+        if (gracefulCloseRef.current) return
+        console.error('SSE connection lost unexpectedly')
         setStatus('error')
         setErrorMessage('Connection lost while streaming trip updates. Please retry.')
-        es.close()
+        closeStream()
       }
     }
 
@@ -106,6 +124,7 @@ export function usePlanStream(planId) {
     connect()
 
     return () => {
+      gracefulCloseRef.current = true
       if (es) es.close()
     }
   }, [planId])

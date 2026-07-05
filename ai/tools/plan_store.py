@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from ai.models.trip_archive import PlanStatus, SavedPlanSnapshot, TripSummary
 
@@ -61,18 +62,44 @@ def build_summary(plan_id: str, state: dict[str, Any], *, created_at: datetime |
     )
 
 
+def enrich_itinerary_dict(itinerary: dict[str, Any], place_photos: dict[str, str]) -> dict[str, Any]:
+    """Copy place_photos onto stops so saved trips keep images after options are cleared."""
+    if not place_photos or not itinerary.get("days"):
+        return itinerary
+
+    enriched_days = []
+    for day in itinerary["days"]:
+        enriched_stops = []
+        for stop in day.get("stops", []):
+            entry = dict(stop)
+            if not entry.get("photo_url"):
+                photo = place_photos.get(entry.get("place_id", ""))
+                if photo:
+                    entry["photo_url"] = photo
+            enriched_stops.append(entry)
+        enriched_days.append({**day, "stops": enriched_stops})
+    return {**itinerary, "days": enriched_days}
+
+
 def sanitize_state_for_storage(plan_id: str, state: dict[str, Any]) -> dict[str, Any]:
     """Strip bulky inline audio blobs — disk files + API URLs are enough."""
     sanitized = dict(state)
+    place_photos = sanitized.get("place_photos") or {}
+    if sanitized.get("itinerary"):
+        sanitized["itinerary"] = enrich_itinerary_dict(sanitized["itinerary"], place_photos)
     scripts_payload = sanitized.get("audio_scripts")
     if scripts_payload and isinstance(scripts_payload.get("scripts"), list):
         cleaned_scripts = []
         for script in scripts_payload["scripts"]:
             entry = dict(script)
             audio_url = entry.get("audio_url") or ""
+            place_id = entry.get("place_id") or ""
             if audio_url.startswith("data:audio/"):
-                entry["audio_url"] = f"/api/plan/{plan_id}/audio/{entry.get('place_id', '')}"
+                entry["audio_url"] = f"/api/plan/{plan_id}/audio?place_id={quote(place_id, safe='')}"
                 entry["audio_source"] = "stored"
+            elif audio_url.startswith("/api/plan/") and place_id:
+                entry["audio_url"] = f"/api/plan/{plan_id}/audio?place_id={quote(place_id, safe='')}"
+                entry["audio_source"] = entry.get("audio_source") or "stored"
             cleaned_scripts.append(entry)
         sanitized["audio_scripts"] = {"scripts": cleaned_scripts}
     return sanitized

@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 from collections import defaultdict
 from typing import AsyncGenerator
 
@@ -12,6 +11,12 @@ from google.genai import Client, types
 from pydantic import ValidationError
 
 from ai.agents.model_fallback import generate_with_fallback
+from ai.models.duration import (
+    ParsedDuration,
+    max_options_per_day,
+    max_stops_for_duration,
+    parse_trip_duration,
+)
 from ai.models.place import PlaceSearchResult
 from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_places_search
 from ai.models.trip import (
@@ -98,6 +103,9 @@ Also:
 - Keep already confirmed places in the output.
 - Do not repeat the same `place_id` across multiple days.
 
+## Duration rules (STRICT — enforced by the system)
+{duration_rules}
+
 ### Mode 2 — Finalise Itinerary
 Use this mode ONLY when the user's most recent message explicitly confirms they
 are done selecting (e.g. "Finalize my itinerary", "I'm happy with these").
@@ -174,16 +182,37 @@ def _build_candidate_section(candidates: list[PlaceSearchResult]) -> str:
     return "\n".join(lines)
 
 
+def _build_duration_rules(parsed: ParsedDuration) -> str:
+    max_stops = max_stops_for_duration(parsed)
+    max_options = max_options_per_day(parsed, parsed.day_count)
+    lines = [
+        f'- User duration: "{parsed.raw}" → {parsed.summary}.',
+        f"- Output EXACTLY {parsed.day_count} day block(s) in the `days` array (day numbers 1..{parsed.day_count}).",
+        "- Never invent extra calendar days beyond this count.",
+    ]
+    if parsed.is_single_outing:
+        lines.extend(
+            [
+                "- This is a single-outing / hour-scale trip: put ALL options on day 1 only.",
+                f"- Suggest at most {max_options} place options total, each fitting within the time window.",
+                f"- When finalising, include at most {max_stops} stops on day 1.",
+                "- Do NOT spread a 7-hour walk into multiple days.",
+            ]
+        )
+    else:
+        lines.append(
+            f"- Distribute options across the {parsed.day_count} day(s); ~{max_options} options per day max."
+        )
+    return "\n".join(lines)
+
+
 def _day_count_from_duration(duration: str | None) -> int:
-    if not duration:
-        return 1
-    match = re.search(r"\d+", duration)
-    if not match:
-        return 1
-    return max(1, int(match.group(0)))
+    return parse_trip_duration(duration).day_count
 
 
-def _search_limit_for_days(day_count: int) -> int:
+def _search_limit_for_days(day_count: int, parsed: ParsedDuration) -> int:
+    if parsed.is_single_outing:
+        return max(4, min(10, max_options_per_day(parsed, day_count) + 2))
     return max(6, min(18, day_count * 6))
 
 
@@ -257,16 +286,19 @@ def _build_options_from_candidates(
     day_count: int,
     candidates: list[PlaceSearchResult],
     confirmed: list[dict],
+    *,
+    parsed: ParsedDuration,
 ) -> ItineraryOptionsModel:
     day_numbers = list(range(1, day_count + 1))
     options_by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in day_numbers}
     seen_place_ids: set[str] = set()
 
     for place in sorted(confirmed, key=lambda item: (item.get("day", 1), item.get("order", 999))):
+        target_day = 1 if parsed.is_single_outing else min(max(1, place.get("day", 1)), day_count)
         candidate = _candidate_from_confirmed_place(place)
         if candidate.place_id in seen_place_ids:
             continue
-        options_by_day.setdefault(place.get("day", 1), []).append(
+        options_by_day.setdefault(target_day, []).append(
             _place_option_from_candidate(
                 candidate,
                 persona_type,
@@ -278,7 +310,7 @@ def _build_options_from_candidates(
         )
         seen_place_ids.add(candidate.place_id)
 
-    per_day_target = max(1, min(5, (len(candidates) + max(day_count, 1) - 1) // max(day_count, 1)))
+    per_day_target = max_options_per_day(parsed, day_count)
     unused_candidates = [candidate for candidate in candidates if candidate.place_id not in seen_place_ids]
     candidate_index = 0
     for day in day_numbers:
@@ -296,6 +328,46 @@ def _build_options_from_candidates(
     return ItineraryOptionsModel(destination=destination, days=days)
 
 
+def _enforce_day_structure(
+    options: ItineraryOptionsModel,
+    day_count: int,
+    parsed: ParsedDuration,
+) -> ItineraryOptionsModel:
+    """Clamp LLM output to the parsed calendar day count (fixes spurious multi-day plans)."""
+    if day_count <= 1 or parsed.is_single_outing:
+        merged: list[PlaceOptionModel] = []
+        seen: set[str] = set()
+        for day in sorted(options.days, key=lambda item: item.day):
+            for option in day.options:
+                if option.place_id in seen:
+                    continue
+                merged.append(option)
+                seen.add(option.place_id)
+        cap = max_options_per_day(parsed, 1)
+        return ItineraryOptionsModel(
+            destination=options.destination,
+            days=[DayOptionsModel(day=1, options=merged[:cap])],
+        )
+
+    by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in range(1, day_count + 1)}
+    seen: set[str] = set()
+    for day in options.days:
+        target = min(max(1, day.day), day_count)
+        for option in day.options:
+            if option.place_id in seen:
+                continue
+            by_day[target].append(option)
+            seen.add(option.place_id)
+
+    cap = max_options_per_day(parsed, day_count)
+    days = [
+        DayOptionsModel(day=day, options=by_day[day][:cap])
+        for day in range(1, day_count + 1)
+        if by_day[day]
+    ]
+    return ItineraryOptionsModel(destination=options.destination, days=days)
+
+
 def _normalize_options(
     raw_options: ItineraryOptionsModel,
     destination: str,
@@ -303,18 +375,22 @@ def _normalize_options(
     day_count: int,
     candidates: list[PlaceSearchResult],
     confirmed: list[dict],
+    *,
+    parsed: ParsedDuration,
 ) -> ItineraryOptionsModel:
+    raw_options = _enforce_day_structure(raw_options, day_count, parsed)
     candidate_map = {candidate.place_id: candidate for candidate in candidates}
     normalized_by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in range(1, day_count + 1)}
     seen_place_ids: set[str] = set()
 
     for day in raw_options.days:
-        normalized_by_day.setdefault(day.day, [])
+        target_day = 1 if parsed.is_single_outing else min(max(1, day.day), day_count)
+        normalized_by_day.setdefault(target_day, [])
         for option in day.options:
             candidate = candidate_map.get(option.place_id)
             if candidate is None or candidate.place_id in seen_place_ids:
                 continue
-            normalized_by_day[day.day].append(
+            normalized_by_day[target_day].append(
                 _place_option_from_candidate(
                     candidate,
                     persona_type,
@@ -345,7 +421,9 @@ def _normalize_options(
         )
         seen_place_ids.add(candidate.place_id)
 
-    fallback_options = _build_options_from_candidates(destination, persona_type, day_count, candidates, confirmed)
+    fallback_options = _build_options_from_candidates(
+        destination, persona_type, day_count, candidates, confirmed, parsed=parsed
+    )
     fallback_by_day = {day.day: list(day.options) for day in fallback_options.days}
     for day in range(1, day_count + 1):
         if normalized_by_day.get(day):
@@ -389,14 +467,24 @@ def _enrich_itinerary_photos(itinerary: ItineraryModel, photos: dict[str, str]) 
     return ItineraryModel(destination=itinerary.destination, days=enriched_days)
 
 
-def _build_final_itinerary(destination: str, confirmed: list[dict]) -> ItineraryModel:
+def _build_final_itinerary(
+    destination: str,
+    confirmed: list[dict],
+    *,
+    parsed: ParsedDuration | None = None,
+) -> ItineraryModel:
+    parsed = parsed or ParsedDuration(raw="", unit="unknown", amount=1, day_count=1)
     grouped: dict[int, list[dict]] = defaultdict(list)
     for place in confirmed:
-        grouped[place.get("day", 1)].append(place)
+        day_number = 1 if parsed.is_single_outing else min(max(1, place.get("day", 1)), parsed.day_count)
+        grouped[day_number].append(place)
 
+    max_stops = max_stops_for_duration(parsed)
     days: list[ItineraryDay] = []
     for day_number in sorted(grouped):
-        ordered_places = sorted(grouped[day_number], key=lambda item: item.get("order", 999))
+        if day_number > parsed.day_count:
+            continue
+        ordered_places = sorted(grouped[day_number], key=lambda item: item.get("order", 999))[:max_stops]
         stops = [
             StopModel(
                 place_id=place["place_id"],
@@ -412,6 +500,38 @@ def _build_final_itinerary(destination: str, confirmed: list[dict]) -> Itinerary
             days.append(ItineraryDay(day=day_number, stops=stops))
 
     return ItineraryModel(destination=destination, days=days)
+
+
+def _enforce_final_itinerary(itinerary: ItineraryModel, parsed: ParsedDuration) -> ItineraryModel:
+    """Clamp a final itinerary to the parsed day count and stop budget."""
+    max_stops = max_stops_for_duration(parsed)
+
+    if parsed.is_single_outing or parsed.day_count <= 1:
+        merged: list[StopModel] = []
+        seen: set[str] = set()
+        for day in sorted(itinerary.days, key=lambda item: item.day):
+            for stop in day.stops:
+                if stop.place_id in seen:
+                    continue
+                merged.append(stop.model_copy(update={"day": 1, "order": len(merged) + 1}))
+                seen.add(stop.place_id)
+                if len(merged) >= max_stops:
+                    break
+            if len(merged) >= max_stops:
+                break
+        return ItineraryModel(
+            destination=itinerary.destination,
+            days=[ItineraryDay(day=1, stops=merged)],
+        )
+
+    days: list[ItineraryDay] = []
+    for day_number in range(1, parsed.day_count + 1):
+        source = next((day for day in itinerary.days if day.day == day_number), None)
+        if source is None:
+            continue
+        stops = source.stops[:max_stops]
+        days.append(ItineraryDay(day=day_number, stops=stops))
+    return ItineraryModel(destination=itinerary.destination, days=days)
 
 
 async def _call_model(
@@ -480,11 +600,21 @@ class ItineraryAgent(BaseAgent):
         )
 
         destination = persona_dict.get("destination", "Unknown")
-        day_count = _day_count_from_duration(persona_dict.get("duration"))
+        duration_raw = persona_dict.get("duration", "")
+        parsed = parse_trip_duration(duration_raw)
+        day_count = parsed.day_count
         persona_type = persona_dict.get("type", "local-life")
 
+        logger.info(
+            "Itinerary duration parsed: raw=%r → %s (day_count=%d, single_outing=%s)",
+            duration_raw,
+            parsed.summary,
+            day_count,
+            parsed.is_single_outing,
+        )
+
         if itinerary_action == "finalize" and confirmed:
-            itinerary = _build_final_itinerary(destination, confirmed)
+            itinerary = _build_final_itinerary(destination, confirmed, parsed=parsed)
             logger.info(
                 "Itinerary finalised from confirmed options for '%s' (%d days).",
                 itinerary.destination,
@@ -503,7 +633,7 @@ class ItineraryAgent(BaseAgent):
         search_candidates = await places_search(
             destination=destination,
             persona_type=persona_type,
-            limit=_search_limit_for_days(day_count),
+            limit=_search_limit_for_days(day_count, parsed),
         )
         current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
         updated_usage = merge_tool_usage(current_usage, usage_from_places_search(search_candidates))
@@ -514,11 +644,12 @@ class ItineraryAgent(BaseAgent):
         # Build system prompt, injecting confirmed places + refinement text.
         system_prompt = ITINERARY_SYSTEM_PROMPT.format(
             destination=destination,
-            duration=persona_dict.get("duration", "Unknown"),
+            duration=duration_raw or "Unknown",
             type=persona_type,
             pace=persona_dict.get("pace", "Unknown"),
             budget=persona_dict.get("budget", "Unknown"),
             notes=persona_dict.get("notes", ""),
+            duration_rules=_build_duration_rules(parsed),
             confirmed_section=_build_confirmed_section(confirmed),
             refinement_section=_build_refinement_section(refinement_text),
             candidate_section=_build_candidate_section(search_candidates),
@@ -600,6 +731,7 @@ class ItineraryAgent(BaseAgent):
                     day_count=day_count,
                     candidates=search_candidates,
                     confirmed=confirmed,
+                    parsed=parsed,
                 )
             else:
                 options = _normalize_options(
@@ -609,7 +741,9 @@ class ItineraryAgent(BaseAgent):
                     day_count=day_count,
                     candidates=search_candidates,
                     confirmed=confirmed,
+                    parsed=parsed,
                 )
+            options = _enforce_day_structure(options, day_count, parsed)
 
             # Log every option for dataflow visibility during development.
             logger.info("Options generated for '%s' (%d days):", options.destination, len(options.days))
@@ -663,10 +797,10 @@ class ItineraryAgent(BaseAgent):
                 )
                 return
 
-            itinerary = _enrich_itinerary_photos(
-                itinerary,
-                _photo_lookup(confirmed, search_candidates),
-            )
+            itinerary = _enforce_final_itinerary(itinerary, parsed)
+            session_photos = dict(ctx.session.state.get("place_photos") or {})
+            photos = {**session_photos, **_photo_lookup(confirmed, search_candidates)}
+            itinerary = _enrich_itinerary_photos(itinerary, photos)
 
             logger.info("Itinerary finalised for '%s' (%d days):", itinerary.destination, len(itinerary.days))
             for day in itinerary.days:

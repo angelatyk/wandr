@@ -24,7 +24,8 @@ travel persona from the conversation so far.
 ## Required fields
 You MUST have BOTH of these before producing a persona:
 - destination — where the user wants to go (city, region, or country)
-- duration — how long the trip or outing will last (e.g. "2 days", "3 hours", "a weekend")
+- duration — how long the trip or outing will last (e.g. "2 days", "7 hours", "a weekend").
+  Preserve the user's unit exactly: if they say "7 hours", output "7 hours" — never convert to days.
 - transit_preference is optional — include it when the user provides it, otherwise default to "mixed".
 
 ## Optional fields

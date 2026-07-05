@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+from urllib.parse import quote
 from uuid import uuid4
 from typing import Dict, Set
 
@@ -22,10 +23,14 @@ from ai.tools.maps import autocomplete_places
 from ai.tools.plan_store import (
     async_save_plan_snapshot,
     derive_plan_status,
+    enrich_itinerary_dict,
     list_plan_summaries,
     load_plan_snapshot,
     save_plan_snapshot,
 )
+from ai.tools.tts import generate_audio
+from ai.agents.narrator import persona_voice_style
+from ai.models.persona import PersonaModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,15 +61,52 @@ def _state_with_event_delta(state: dict, event) -> dict:
 
 
 def _stop_audio_api_url(plan_id: str, place_id: str) -> str:
-    return f"/api/plan/{plan_id}/audio/{place_id}"
+    return f"/api/plan/{plan_id}/audio?place_id={quote(place_id, safe='')}"
+
+
+def _normalize_stop_audio_url(plan_id: str, place_id: str, audio_url: str) -> str:
+    """Always expose query-param URLs — path-style place IDs break routing."""
+    if not audio_url or not place_id:
+        return audio_url
+    if audio_url.startswith("data:audio/") or audio_url.startswith("http://") or audio_url.startswith("https://"):
+        return audio_url
+    if audio_url.startswith("/api/plan/"):
+        return _stop_audio_api_url(plan_id, place_id)
+    return audio_url
 
 
 def _public_stop_payload(plan_id: str, script: dict) -> dict:
     """Send a browser-playable URL in SSE instead of a huge inline data URL."""
     payload = dict(script)
+    place_id = payload.get("place_id") or ""
     audio_url = payload.get("audio_url") or ""
-    if audio_url and not audio_url.startswith("/api/plan/"):
-        payload["audio_url"] = _stop_audio_api_url(plan_id, payload["place_id"])
+    if audio_url:
+        payload["audio_url"] = _normalize_stop_audio_url(plan_id, place_id, audio_url)
+    return payload
+
+
+def _public_itinerary_payload(state: dict) -> dict:
+    """Ensure itinerary stops include persisted photos when options were cleared."""
+    itinerary = state.get("itinerary")
+    if not itinerary:
+        return itinerary
+    place_photos = state.get("place_photos") or {}
+    return enrich_itinerary_dict(itinerary, place_photos)
+
+
+def _public_complete_payload(plan_id: str, state: dict) -> dict:
+    """Normalize persisted state for frontend replay on complete."""
+    payload = dict(state)
+    if payload.get("itinerary"):
+        payload["itinerary"] = _public_itinerary_payload(state)
+    scripts_payload = payload.get("audio_scripts")
+    if scripts_payload and isinstance(scripts_payload.get("scripts"), list):
+        payload["audio_scripts"] = {
+            "scripts": [
+                _public_stop_payload(plan_id, script)
+                for script in scripts_payload["scripts"]
+            ],
+        }
     return payload
 
 
@@ -292,7 +334,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                     )
                     await queue.put(PipelineEvent(
                         type="itinerary_done",
-                        data=itinerary_payload,
+                        data=_public_itinerary_payload(effective_state),
                         progress=progress
                     ).model_dump())
                     emitted_phases.add("itinerary_done")
@@ -350,7 +392,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         await _snapshot_session_state(plan_id)
         await queue.put(PipelineEvent(
             type="complete",
-            data=final_state,
+            data=_public_complete_payload(plan_id, final_state),
             progress=progress
         ).model_dump())
 
@@ -482,6 +524,7 @@ async def select_places(plan_id: str, body: SelectRequest):
         session=current_session,
         event=update_event
     )
+    await _snapshot_session_state(plan_id)
 
     if body.action == "finalize":
         # Inject a synthetic user message that triggers the agent's final mode.
@@ -505,10 +548,43 @@ async def places_autocomplete(query: str = Query("", min_length=0, max_length=20
     return {"suggestions": suggestions}
 
 
-@app.get("/api/plan/{plan_id}/audio/{place_id}")
-async def stream_stop_audio(plan_id: str, place_id: str):
-    """Stream synthesized MP3 bytes for a stop — used by the frontend <audio> element."""
-    # Prefer on-disk files — they survive server restarts and page refreshes.
+async def _regenerate_stop_audio(plan_id: str, place_id: str, state: dict) -> bytes | None:
+    """Re-synthesize MP3 when the script exists but the file was never saved."""
+    script = _find_script_in_state(state, place_id)
+    if script is None:
+        return None
+
+    text = (script.get("script") or "").strip()
+    if not text or text.startswith("We could not generate narration"):
+        return None
+
+    persona_dict = state.get("persona")
+    if not persona_dict:
+        return None
+
+    try:
+        persona = PersonaModel.model_validate(persona_dict)
+        voice_style = persona_voice_style(persona)
+        await generate_audio(
+            text,
+            voice_style,
+            plan_id=plan_id,
+            place_id=place_id,
+        )
+        logger.info("On-demand TTS regenerated audio for plan=%s place=%s", plan_id, place_id)
+        return load_plan_audio(plan_id, place_id)
+    except Exception as exc:
+        logger.warning(
+            "On-demand TTS regen failed for plan=%s place=%s: %s",
+            plan_id,
+            place_id,
+            exc,
+        )
+        return None
+
+
+async def _stream_stop_audio_bytes(plan_id: str, place_id: str) -> Response:
+    """Load or regenerate MP3 bytes for one stop narration."""
     audio_bytes = load_plan_audio(plan_id, place_id)
     if audio_bytes:
         return Response(
@@ -517,22 +593,15 @@ async def stream_stop_audio(plan_id: str, place_id: str):
             headers={"Cache-Control": "private, max-age=86400"},
         )
 
-    current_session = await session_service.get_session(
-        app_name=APP_NAME,
-        user_id="user",
-        session_id=plan_id,
-    )
-    if current_session is None:
+    state = await _ensure_plan_session(plan_id)
+    if not state:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    script = _find_script_in_state(current_session.state, place_id)
+    script = _find_script_in_state(state, place_id)
     if script is None:
         raise HTTPException(status_code=404, detail="Audio not found for this stop")
 
     stored_url = script.get("audio_url") or ""
-    if not stored_url:
-        raise HTTPException(status_code=404, detail="No audio generated for this stop")
-
     if stored_url.startswith("data:audio/"):
         try:
             _, encoded = stored_url.split(",", 1)
@@ -548,7 +617,30 @@ async def stream_stop_audio(plan_id: str, place_id: str):
     if stored_url.startswith("http://") or stored_url.startswith("https://"):
         return RedirectResponse(stored_url, status_code=302)
 
-    raise HTTPException(status_code=404, detail="Unsupported audio URL format")
+    # API URL saved but file missing — try one on-demand TTS pass.
+    audio_bytes = await _regenerate_stop_audio(plan_id, place_id, state)
+    if audio_bytes:
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+
+    if not stored_url:
+        raise HTTPException(status_code=404, detail="No audio generated for this stop")
+    raise HTTPException(status_code=404, detail="Narration audio file missing for this stop")
+
+
+@app.get("/api/plan/{plan_id}/audio")
+async def stream_stop_audio(plan_id: str, place_id: str = Query(..., min_length=1)):
+    """Stream synthesized MP3 bytes for a stop — used by the frontend <audio> element."""
+    return await _stream_stop_audio_bytes(plan_id, place_id)
+
+
+@app.get("/api/plan/{plan_id}/audio/{place_id:path}")
+async def stream_stop_audio_legacy(plan_id: str, place_id: str):
+    """Backwards-compatible path route for older saved audio URLs."""
+    return await _stream_stop_audio_bytes(plan_id, place_id)
 
 
 @app.get("/api/trips")
@@ -605,7 +697,7 @@ async def stream_plan(plan_id: str):
             if state.get("itinerary_options") is not None:
                 yield f"data: {json.dumps({'type': 'itinerary_options', 'data': state['itinerary_options'], 'progress': 40})}\n\n"
             if state.get("itinerary") is not None:
-                yield f"data: {json.dumps({'type': 'itinerary_done', 'data': state['itinerary'], 'progress': 50})}\n\n"
+                yield f"data: {json.dumps({'type': 'itinerary_done', 'data': _public_itinerary_payload(state), 'progress': 50})}\n\n"
             if state.get("audio_scripts") is not None and "scripts" in state["audio_scripts"]:
                 for script in state["audio_scripts"]["scripts"]:
                     public_script = _public_stop_payload(plan_id, script)
@@ -615,7 +707,7 @@ async def stream_plan(plan_id: str):
 
             status = derive_plan_status(state)
             if status == "complete":
-                yield f"data: {json.dumps({'type': 'complete', 'data': state, 'progress': 100})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete', 'data': _public_complete_payload(plan_id, state), 'progress': 100})}\n\n"
                 return
             if status in ("awaiting_selection", "planning", "started"):
                 return
