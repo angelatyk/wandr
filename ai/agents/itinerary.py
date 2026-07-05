@@ -189,19 +189,20 @@ def _build_duration_rules(parsed: ParsedDuration) -> str:
         f'- User duration: "{parsed.raw}" → {parsed.summary}.',
         f"- Output EXACTLY {parsed.day_count} day block(s) in the `days` array (day numbers 1..{parsed.day_count}).",
         "- Never invent extra calendar days beyond this count.",
+        "- Include a mix of primary attractions and **short stops** (e.g. 15-30 mins: statues, viewpoints, quick snacks, small parks) so the user can build a rich, multi-stop itinerary.",
     ]
     if parsed.is_single_outing:
         lines.extend(
             [
                 "- This is a single-outing / hour-scale trip: put ALL options on day 1 only.",
-                f"- Suggest at most {max_options} place options total, each fitting within the time window.",
+                f"- Suggest up to {max_options} place options total. Provide plenty of options for the user to choose from; the total time of all options combined CAN exceed the specified duration because the user will curate a subset.",
                 f"- When finalising, include at most {max_stops} stops on day 1.",
                 "- Do NOT spread a 7-hour walk into multiple days.",
             ]
         )
     else:
         lines.append(
-            f"- Distribute options across the {parsed.day_count} day(s); ~{max_options} options per day max."
+            f"- Distribute options across the {parsed.day_count} day(s); ~{max_options} options per day max. Provide plenty of options; the total time can exceed the duration because the user curates it."
         )
     return "\n".join(lines)
 
@@ -382,6 +383,7 @@ def _normalize_options(
     candidate_map = {candidate.place_id: candidate for candidate in candidates}
     normalized_by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in range(1, day_count + 1)}
     seen_place_ids: set[str] = set()
+    seen_names: set[str] = set()
 
     for day in raw_options.days:
         target_day = 1 if parsed.is_single_outing else min(max(1, day.day), day_count)
@@ -390,6 +392,11 @@ def _normalize_options(
             candidate = candidate_map.get(option.place_id)
             if candidate is None or candidate.place_id in seen_place_ids:
                 continue
+            
+            name_key = candidate.name.strip().lower()
+            if name_key in seen_names:
+                continue
+                
             normalized_by_day[target_day].append(
                 _place_option_from_candidate(
                     candidate,
@@ -401,6 +408,7 @@ def _normalize_options(
                 )
             )
             seen_place_ids.add(candidate.place_id)
+            seen_names.add(name_key)
 
     for place in sorted(confirmed, key=lambda item: (item.get("day", 1), item.get("order", 999))):
         candidate = candidate_map.get(place["place_id"]) or _candidate_from_confirmed_place(place)
@@ -408,6 +416,9 @@ def _normalize_options(
         existing_ids = {option.place_id for option in normalized_by_day.setdefault(day, [])}
         if candidate.place_id in existing_ids:
             continue
+            
+        name_key = candidate.name.strip().lower()
+            
         normalized_by_day[day].insert(
             0,
             _place_option_from_candidate(
@@ -420,6 +431,7 @@ def _normalize_options(
             ),
         )
         seen_place_ids.add(candidate.place_id)
+        seen_names.add(name_key)
 
     fallback_options = _build_options_from_candidates(
         destination, persona_type, day_count, candidates, confirmed, parsed=parsed
@@ -635,6 +647,19 @@ class ItineraryAgent(BaseAgent):
             persona_type=persona_type,
             limit=_search_limit_for_days(day_count, parsed),
         )
+        
+        if refinement_text:
+            refinement_candidates = await places_search(
+                destination=destination,
+                persona_type=persona_type,
+                limit=3,
+                explicit_query=f"{refinement_text} in {destination}"
+            )
+            existing_ids = {c.place_id for c in search_candidates}
+            for candidate in refinement_candidates:
+                if candidate.place_id not in existing_ids:
+                    search_candidates.append(candidate)
+                    existing_ids.add(candidate.place_id)
         current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
         updated_usage = merge_tool_usage(current_usage, usage_from_places_search(search_candidates))
         for place in confirmed:

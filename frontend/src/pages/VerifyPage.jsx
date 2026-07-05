@@ -2,6 +2,32 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePlanStream } from '../hooks/usePlanStream'
 
+function parseDurationString(str) {
+  if (!str) return 0;
+  const s = str.toLowerCase();
+  const num = parseFloat(s.match(/(\d+(?:\.\d+)?)/)?.[1] || '0');
+  if (s.includes('hour') || s.includes('hr')) return num;
+  if (s.includes('day')) return num * 24;
+  if (s.includes('week')) return num * 24 * 7;
+  return num;
+}
+
+function parseSuggestedDuration(str) {
+  if (!str) return 1.0;
+  const s = str.toLowerCase();
+  let multiplier = 1.0;
+  if (s.includes('min')) multiplier = 1 / 60;
+  
+  const matches = s.match(/(\d+(?:\.\d+)?)/g);
+  if (matches) {
+    if (matches.length > 1) {
+      return ((parseFloat(matches[0]) + parseFloat(matches[1])) / 2) * multiplier;
+    }
+    return parseFloat(matches[0]) * multiplier;
+  }
+  return 1.0;
+}
+
 /**
  * VerifyPage — review and curate itinerary options before finalising.
  *
@@ -26,6 +52,8 @@ export default function VerifyPage() {
   const [refineText, setRefineText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [actionStatus, setActionStatus] = useState(null) // 'refining' | 'finalizing' | null
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [exceededData, setExceededData] = useState(null)
 
   // Redirect if no planId
   useEffect(() => {
@@ -46,9 +74,9 @@ export default function VerifyPage() {
     setActionStatus(null)
   }, [itineraryOptions])
 
-  // Navigate to /itinerary once the full pipeline is complete
+  // Navigate to /itinerary once the route is finalized (even if narration is incomplete)
   useEffect(() => {
-    if (status === 'complete') {
+    if (status === 'complete' || status === 'routing') {
       navigate(`/itinerary?planId=${planId}`)
     }
   }, [status, navigate, planId])
@@ -95,6 +123,31 @@ export default function VerifyPage() {
 
   const handleFinalize = () => {
     if (submitting) return
+
+    let totalSuggested = 0
+    let placesList = []
+    
+    for (const day of itineraryOptions?.days ?? []) {
+      for (const place of day.options ?? []) {
+        if (confirmed.has(place.place_id)) {
+          totalSuggested += parseSuggestedDuration(place.suggested_duration)
+          placesList.push(place.name)
+        }
+      }
+    }
+    
+    const totalWithOverhead = totalSuggested * 1.2
+    const maxDuration = parseDurationString(duration)
+    
+    if (maxDuration > 0 && totalWithOverhead > maxDuration + 0.5 && maxDuration < 24) {
+      setExceededData({
+        places: placesList,
+        calculated: Math.round(totalWithOverhead * 10) / 10
+      })
+      setShowConfirmModal(true)
+      return
+    }
+
     callSelect('finalize')
   }
 
@@ -412,6 +465,46 @@ export default function VerifyPage() {
           </span>
         </button>
       </div>
+
+      {/* Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-surface/80 backdrop-blur-sm">
+          <div 
+            className="bg-surface-white border border-outline-variant/30 shadow-[var(--shadow-raised)] rounded-3xl p-8 relative"
+            style={{ width: '100%', maxWidth: '28rem' }}
+          >
+            <h3 className="text-2xl font-semibold text-primary mb-4" style={{ fontFamily: 'var(--font-display)' }}>
+              Are you sure?
+            </h3>
+            <p className="text-base text-on-surface-muted mb-6" style={{ fontFamily: 'var(--font-body)' }}>
+              You have selected to visit the following places:
+              <br /><br />
+              <strong className="text-on-surface block mb-4 break-words">{exceededData?.places.join(', ')}</strong>
+              But the total time needed is ~{exceededData?.calculated} hours, which exceeds the time you specified ({duration}). Would you like to proceed anyway?
+            </p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 bg-surface-container-low text-on-surface font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl transition-colors hover:bg-surface-container"
+                style={{ fontFamily: 'var(--font-body)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowConfirmModal(false)
+                  callSelect('finalize')
+                }}
+                className="flex-1 bg-primary text-white font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl transition-all hover:bg-primary-tint active:scale-95"
+                style={{ fontFamily: 'var(--font-body)' }}
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

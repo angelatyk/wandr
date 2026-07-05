@@ -709,7 +709,7 @@ async def stream_plan(plan_id: str):
             if status == "complete":
                 yield f"data: {json.dumps({'type': 'complete', 'data': _public_complete_payload(plan_id, state), 'progress': 100})}\n\n"
                 return
-            if status in ("awaiting_selection", "planning", "started"):
+            if status == "awaiting_selection":
                 return
         except Exception:
             pass

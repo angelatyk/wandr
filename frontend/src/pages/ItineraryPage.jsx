@@ -240,6 +240,7 @@ export default function ItineraryPage() {
               onPinClick={handlePinClick}
               activeStopId={activeStopId}
               totalWalkMin={totalWalk}
+              destination={destination}
             />
           </div>
         </section>

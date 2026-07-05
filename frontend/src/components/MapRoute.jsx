@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps'
+import { APIProvider, Map, useMap, useMapsLibrary } from '@vis.gl/react-google-maps'
 
 const API_KEY =
   import.meta.env.VITE_GOOGLE_CLOUD_API_KEY ||
@@ -129,28 +129,37 @@ function LegacyMarker({ position, title, labelText, onClick, isActive, fillColor
 
 function BoundsController({ stops }) {
   const map = useMap()
+  const coreLib = useMapsLibrary('core')
 
   useEffect(() => {
-    if (!map || !stops?.length || !window.google?.maps) return
+    if (!map || !stops?.length || !coreLib) return
 
-    const bounds = new window.google.maps.LatLngBounds()
-    stops.forEach((stop) => bounds.extend({ lat: stop.lat, lng: stop.lng }))
-    map.fitBounds(bounds, 64)
-  }, [map, stops])
+    const bounds = new coreLib.LatLngBounds()
+    stops.forEach((stop) => {
+      if (typeof stop.lat === 'number' && typeof stop.lng === 'number') {
+        bounds.extend({ lat: stop.lat, lng: stop.lng })
+      }
+    })
+    
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, 64)
+    }
+  }, [map, stops, coreLib])
 
   return null
 }
 
 function MapPanController({ activeStopId, stops }) {
   const map = useMap()
+  const coreLib = useMapsLibrary('core')
 
   useEffect(() => {
-    if (!map || !activeStopId || !stops?.length) return
+    if (!map || !activeStopId || !stops?.length || !coreLib) return
     const stop = stops.find((s) => String(s.id) === String(activeStopId))
-    if (stop) {
+    if (stop && typeof stop.lat === 'number' && typeof stop.lng === 'number') {
       map.panTo({ lat: stop.lat, lng: stop.lng })
     }
-  }, [map, activeStopId, stops])
+  }, [map, activeStopId, stops, coreLib])
 
   return null
 }
@@ -263,12 +272,18 @@ function PerDayRoadRoutes({ days, travelMode, onStatsChange }) {
 
       onStatsChange?.({ calculating: false, routeError: anyError, totals })
 
-      const bounds = new window.google.maps.LatLngBounds()
-      results.forEach((entry) =>
-        entry.orderedStops.forEach((stop) => bounds.extend({ lat: stop.lat, lng: stop.lng }))
-      )
-      if (!bounds.isEmpty()) {
-        map.fitBounds(bounds, 64)
+      if (window.google?.maps) {
+        const bounds = new window.google.maps.LatLngBounds()
+        results.forEach((entry) =>
+          entry.orderedStops.forEach((stop) => {
+            if (typeof stop.lat === 'number' && typeof stop.lng === 'number') {
+              bounds.extend({ lat: stop.lat, lng: stop.lng })
+            }
+          })
+        )
+        if (!bounds.isEmpty()) {
+          map.fitBounds(bounds, 64)
+        }
       }
     })
 
@@ -347,7 +362,10 @@ function MapLayers({
   onPinClick,
   activeStopId,
   totalWalkMin,
+  destination,
 }) {
+  const map = useMap()
+  const geocodingLib = useMapsLibrary('geocoding')
   const allStops = useMemo(
     () => days.flatMap((day) => day.stops ?? []),
     [days]
@@ -363,10 +381,44 @@ function MapLayers({
     setRouteStats(stats)
   }, [])
 
+  const [geocodedCenter, setGeocodedCenter] = useState(null)
+
+  useEffect(() => {
+    if (allStops.length > 0 || !geocodingLib || !destination) return
+    let cancelled = false
+    const geocoder = new geocodingLib.Geocoder()
+    geocoder.geocode({ address: destination }, (results, status) => {
+      if (cancelled || status !== 'OK' || !results?.[0]?.geometry?.location) return
+      setGeocodedCenter({
+        lat: results[0].geometry.location.lat(),
+        lng: results[0].geometry.location.lng(),
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [allStops.length, geocodingLib, destination])
+
+  useEffect(() => {
+    if (!map) return
+    if (allStops.length > 0) {
+      // BoundsController will handle zooming when stops exist
+      return
+    }
+    if (geocodedCenter) {
+      map.setCenter(geocodedCenter)
+      map.setZoom(12)
+    } else {
+      map.setCenter({ lat: 43.6532, lng: -79.3832 }) // Fallback to Toronto instead of Bogota
+      map.setZoom(12)
+    }
+  }, [map, allStops.length, geocodedCenter])
+
+  // Initial render center
   const defaultCenter =
     allStops.length > 0
       ? { lat: allStops[0].lat, lng: allStops[0].lng }
-      : { lat: 4.6533, lng: -74.0836 }
+      : { lat: 43.6532, lng: -79.3832 } // Fallback to Toronto
 
   return (
     <>
@@ -420,6 +472,7 @@ export default function MapRoute({
   onPinClick,
   activeStopId = null,
   totalWalkMin = 0,
+  destination = '',
 }) {
   if (!API_KEY) {
     return (
@@ -440,6 +493,7 @@ export default function MapRoute({
           onPinClick={onPinClick}
           activeStopId={activeStopId}
           totalWalkMin={totalWalkMin}
+          destination={destination}
         />
       </div>
     </APIProvider>

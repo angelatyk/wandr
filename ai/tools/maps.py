@@ -286,7 +286,7 @@ async def autocomplete_places(query: str, limit: int = 5) -> list[str]:
     return suggestions
 
 
-async def places_search(destination: str, persona_type: str, limit: int = 5) -> list[PlaceSearchResult]:
+async def places_search(destination: str, persona_type: str, limit: int = 5, explicit_query: str | None = None) -> list[PlaceSearchResult]:
     if _uses_mock_places():
         logger.warning("Skipping place search because GOOGLE_PLACES_API_KEY is not configured.")
         return []
@@ -299,7 +299,8 @@ async def places_search(destination: str, persona_type: str, limit: int = 5) -> 
 
     unique_places: dict[str, PlaceSearchResult] = {}
     try:
-        for query in _search_queries(destination, persona_type):
+        queries = [explicit_query] if explicit_query else _search_queries(destination, persona_type)
+        for query in queries:
             remaining = max(limit - len(unique_places), 0)
             if remaining == 0:
                 break

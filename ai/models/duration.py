@@ -141,15 +141,15 @@ def parse_trip_duration(duration: str | None) -> ParsedDuration:
 def max_stops_for_duration(parsed: ParsedDuration) -> int:
     """Upper bound on final stops that fit the requested time window."""
     if parsed.is_single_outing and parsed.total_hours:
-        # ~1.5 hours per stop including walking between places
-        return max(2, min(6, int(parsed.total_hours // 1.5)))
+        # Generous bound to allow user to pack their itinerary if they want
+        return max(3, min(8, int(parsed.total_hours // 1.2)))
     if parsed.day_count == 1:
-        return 5
-    return max(3, min(8, parsed.day_count * 4))
+        return 6
+    return max(4, min(10, parsed.day_count * 5))
 
 
 def max_options_per_day(parsed: ParsedDuration, day_count: int) -> int:
     """How many place options to surface per day in options mode."""
     if parsed.is_single_outing and parsed.total_hours:
-        return max(3, min(8, int(parsed.total_hours // 1)))
-    return max(2, min(5, 3 + day_count))
+        return max(5, min(12, int(parsed.total_hours * 1.5)))
+    return max(5, min(10, 4 + day_count))

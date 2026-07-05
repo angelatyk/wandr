@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import AsyncGenerator
 
 from google.adk.agents import BaseAgent
@@ -96,14 +97,38 @@ class OrchestratorAgent(BaseAgent):
                 logger.info("  Day %d:", day.day)
                 for stop in day.stops:
                     logger.info("    Stop %d: %s (%s)", stop.order, stop.name, stop.place_id)
+        # 3. Run Logistics and Stop Processor in parallel
+        itinerary_dict = ctx.session.state.get("itinerary")
+        needs_audio = itinerary_dict and not ctx.session.state.get("audio_scripts")
+        route_exists = bool(ctx.session.state.get("route"))
 
-            logger.info("Running parallel Stop Processor...")
-            # process_all_stops is a plain async function — no ctx passed (pipeline must not touch ADK)
+        logger.info(
+            "Preparing parallel logistics & stop processor (has_itinerary=%s route_already_exists=%s needs_audio=%s).",
+            bool(itinerary_dict),
+            route_exists,
+            needs_audio,
+        )
+
+        async def run_stop_processor_task():
+            logger.info("Running parallel Stop Processor task...")
             plan_id = ctx.session.id
             audio_scripts = await process_all_stops(itinerary, persona, plan_id=plan_id)
             current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
             updated_usage = merge_tool_usage(current_usage, usage_from_audio_scripts(audio_scripts.scripts))
+            return audio_scripts, updated_usage
 
+        stop_task = None
+        if needs_audio:
+            stop_task = asyncio.create_task(run_stop_processor_task())
+        elif not itinerary_dict:
+            logger.error("Missing itinerary in state — skipping stop processor.")
+
+        logger.info("Running Logistics...")
+        async for event in logistics_agent.run_async(ctx):
+            yield event
+
+        if stop_task:
+            audio_scripts, updated_usage = await stop_task
             # Emit the result as state_delta so it's persisted via the runner, not via direct mutation
             yield Event(
                 author=self.name,
@@ -120,20 +145,6 @@ class OrchestratorAgent(BaseAgent):
                     )],
                 ),
             )
-        else:
-            logger.error("Missing persona in state — skipping stop processor.")
-
-        # 4. Run Logistics — emits state_delta(route) which runner applies to ctx.session.state
-        route_exists = bool(ctx.session.state.get("route"))
-        logger.info(
-            "Preparing logistics run (has_itinerary=%s has_audio_scripts=%s route_already_exists=%s).",
-            bool(ctx.session.state.get("itinerary")),
-            bool(ctx.session.state.get("audio_scripts")),
-            route_exists,
-        )
-        logger.info("Running Logistics...")
-        async for event in logistics_agent.run_async(ctx):
-            yield event
 
         # Final completion event
         yield Event(

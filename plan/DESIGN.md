@@ -41,25 +41,25 @@ Still remaining:
 
 ### How state flows
 
-The pipeline has two phases: a **sequential setup phase** (Profiler → Itinerary) that establishes the trip plan, followed by a **parallel fan-out phase** where a Stop Processor spawns a (Stop Research, Narrator) pair concurrently for every stop. Logistics runs last once all audio is ready. All agents share `session.state`; structured outputs use Pydantic schemas.
+The pipeline has two phases: a **sequential setup phase** (Profiler → Itinerary) that establishes the trip plan, followed by a **parallel execution phase** where the Stop Processor (concurrency for stop research/narration) and the Logistics agent (calculating directions/coordinates) run in parallel. This allows the frontend to immediately retrieve coordinates and render the finalized route on the map in under 2 seconds, while the audio narrations stream in gradually.
 
 ```
 User prompt
     ↓
-Profiler ──────────────────────────── writes: session.state["persona"]
+Profiler ──────────────────────────── writes: session.state["persona"] (requires destination, duration, transit)
     ↓
 Itinerary ─────────────────────────── reads: persona
-                                       writes: session.state["itinerary"]
+                                       writes: session.state["itinerary"] (deduplicated & mixed stops)
     ↓
-Stop Processor (parallel fan-out)
-    ├── Stop A: StopResearch → Narrator ─┐
-    ├── Stop B: StopResearch → Narrator ─┤── asyncio.gather()
-    ├── Stop C: StopResearch → Narrator ─┤
-    └── Stop N: StopResearch → Narrator ─┘
-                                       writes: session.state["audio_scripts"]
-    ↓
-Logistics ─────────────────────────── reads: itinerary, audio_scripts
-                                       writes: session.state["route"]
+Parallel Execution
+    ├── Logistics ─────────────────── reads: itinerary
+    │                                  writes: session.state["route"] (triggers logistics_done)
+    │
+    └── Stop Processor (parallel fan-out)
+         ├── Stop A: StopResearch → Narrator ─┐
+         ├── Stop B: StopResearch → Narrator ─┤── asyncio.gather()
+         └── Stop N: StopResearch → Narrator ─┘
+                                               writes: session.state["audio_scripts"] (triggers stop_done)
     ↓
 Orchestrator assembles final response (itinerary + audio + map)
 ```
@@ -80,20 +80,25 @@ POST /api/plan
     - transit_preference
     ↓
 Profiler
+    - Validates mandatory inputs (asks clarifying questions if missing)
+    - Defaults missing optional fields (persona type defaults to tourist)
     ↓
 Itinerary
-    ├── calls places_search(...)
-    └── writes itinerary_options or itinerary
+    - Calls places_search(...)
+    - Deduplicates results by name & ID, ensures mix of short/long duration stops
+    - Writes itinerary_options or itinerary
     ↓
 VerifyPage refine/finalize
+    - If finalize clicked, checks if selections exceed duration specified (overhead included)
     ↓
-Stop Processor fan-out
-    ├── Stop Research ── calls get_place_details(...)
-    └── Narrator ─────── calls generate_audio(...)
-    ↓
-Logistics
-    ├── calls get_place_details(...)
-    └── calls get_directions(...)
+Parallel Execution (Logistics & Stop Processor)
+    ├── Logistics
+    │     ├── Calls get_place_details(...) & get_directions(...)
+    │     └── Writes route & emits logistics_done (frontend navigates to ItineraryPage to show map)
+    │
+    └── Stop Processor fan-out (runs concurrently)
+          ├── Stop Research ── calls get_place_details(...)
+          └── Narrator ─────── calls generate_audio(...) & emits stop_done incrementally
     ↓
 session.state
     - persona
@@ -113,12 +118,13 @@ VerifyPage / ItineraryPage / debugging tools
 
 **ADK type:** `SequentialAgent`
 
-The ADK root. Bootstraps the sequential pipeline, hands off to the Stop Processor for parallel execution, then merges all state keys into the final response. Handles errors if any sub-agent fails and triggers re-runs on user edits.
+The ADK root. Bootstraps the sequential pipeline, hands off to the Stop Processor and Logistics agent for parallel/concurrent execution, then merges all state keys into the final response. Handles errors if any sub-agent fails and triggers re-runs on user edits.
 
 - Parses and validates the initial user request
 - Passes `InvocationContext` to each sub-agent in order
 - Merges `itinerary`, `audio_scripts`, and `route` into the final response
 - Supports re-generation when user changes persona or destination
+- **Execution Order Change**: Triggers `LogisticsAgent` and `StopProcessor` concurrently so the UI can retrieve the finalized route map first without waiting for slow audio files to generate.
 
 ---
 
@@ -128,8 +134,10 @@ The ADK root. Bootstraps the sequential pipeline, hands off to the Stop Processo
 **Tools:** none
 **State:** `output_key="persona"` | `output_schema=PersonaModel`
 
-Captures and enriches the user's travel persona. Asks follow-up questions if destination, duration, or preferences are missing. Produces a structured Pydantic object written to `session.state["persona"]`.
+Captures and enriches the user's travel persona. Asks follow-up questions if destination, duration, or transit preference are missing. Produces a structured Pydantic object written to `session.state["persona"]`.
 
+- **Mandatory Fields**: Destination, duration, and transit preference are mandatory. If any are missing, the agent will prompt the user with clarifying questions.
+- **Optional Fields & Defaults**: Preferences like persona interests are optional. If not specified, the persona defaults to a general "tourist" persona rather than stalling.
 - Classifies persona: foodie / artist / historian / adventurer / local-life
 - Infers pace, budget level, accessibility needs from conversation
 - Persona object stored locally in browser (never sent to backend)
@@ -146,6 +154,8 @@ Captures and enriches the user's travel persona. Asks follow-up questions if des
 Takes the persona and trip parameters, calls Google Places via its registered tools to gather candidates, then builds a structured day-by-day stop list. Does not do deep research on each stop — that is delegated to the parallel Stop Research agents.
 
 - Calls `places_search(destination, persona_type)` for initial candidates
+- **Deduplication**: Filters candidates to avoid duplicate suggestions of the same place (based on name similarity and Google Place ID matches).
+- **Duration / Suggestions Mix**: Recommends a mix of stop durations (including "short stops" ranging from 15-45 minutes and longer spots) rather than only places that use up the user's entire duration, applying this universally across all trip lengths to give the user multiple options.
 - Balances must-see vs hidden gem ratio per persona type
 - Produces a flat ordered stop list per day, ready for fan-out
 - Handles multi-day trips with clean day boundaries
@@ -156,7 +166,7 @@ Takes the persona and trip parameters, calls Google Places via its registered to
 
 **ADK type:** `asyncio.gather` orchestration in `pipeline/stop_processor.py`
 
-Not an LLM agent — a Python coordinator that receives `session.state["itinerary"]` and spawns a (Stop Research → Narrator) pair for every stop concurrently. This is the primary showcase of multi-agent parallelism.
+Not an LLM agent — a Python coordinator that receives `session.state["itinerary"]` and spawns a (Stop Research → Narrator) pair for every stop concurrently. This runs concurrently with the Logistics agent in the background so audio narration streams incrementally after the route maps load.
 
 ```python
 # pipeline/stop_processor.py (simplified)
@@ -213,7 +223,7 @@ Runs in parallel (one per stop), immediately after Stop Research for the same st
 **Tools:** `get_directions`
 **State:** reads `session.state["itinerary"]`, `session.state["audio_scripts"]` | `output_key="route"`
 
-Runs after all parallel stop processing is complete. Optimizes the route order across stops, calculates travel times, and generates the map data.
+Runs concurrently with Stop Processor execution. Optimizes the route order across stops, calculates travel times, and generates the map data. Because it finishes quickly, its completion event (`logistics_done`) triggers the frontend to load the finalized route map early.
 
 - Route optimization via nearest-neighbor across stops per day
 - Calculates travel time between stops using Google Maps Directions API
