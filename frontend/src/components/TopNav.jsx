@@ -2,14 +2,13 @@ import { Link, useLocation } from 'react-router-dom'
 
 const NAV_LINKS = [
   { label: 'Explore', to: '/' },
-  { label: 'My Trips', to: '/itinerary' },
-  { label: 'Saved', to: '/verify' },
+  { label: 'My Trips', to: '/trips' },
 ]
 
 const MOBILE_NAV = [
   { label: 'Discover', icon: 'explore', to: '/' },
   { label: 'Planner', icon: 'map', to: '/refine' },
-  { label: 'Library', icon: 'headphones', to: '/itinerary' },
+  { label: 'Library', icon: 'headphones', to: '/trips' },
   { label: 'Profile', icon: 'person', to: '#' },
 ]
 

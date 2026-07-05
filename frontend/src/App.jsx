@@ -3,6 +3,7 @@ import HomePage from './pages/HomePage'
 import RefinePage from './pages/RefinePage'
 import VerifyPage from './pages/VerifyPage'
 import ItineraryPage from './pages/ItineraryPage'
+import TripsPage from './pages/TripsPage'
 
 /**
  * App — top-level route table.
@@ -12,6 +13,7 @@ import ItineraryPage from './pages/ItineraryPage'
  *   /refine     AI profiler clarification form
  *   /verify     Stop review before narration
  *   /itinerary  Split-view map + timeline + audio player
+ *   /trips      Saved trips library (no agent re-run)
  */
 export default function App() {
   return (
@@ -20,6 +22,7 @@ export default function App() {
       <Route path="/refine"     element={<RefinePage />} />
       <Route path="/verify"     element={<VerifyPage />} />
       <Route path="/itinerary"  element={<ItineraryPage />} />
+      <Route path="/trips"      element={<TripsPage />} />
       {/* Catch-all → home */}
       <Route path="*"           element={<Navigate to="/" replace />} />
     </Routes>

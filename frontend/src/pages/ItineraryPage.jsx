@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import StopCard from '../components/StopCard'
 import AudioPlayer from '../components/AudioPlayer'
 import { usePlanStream } from '../hooks/usePlanStream'
-import MapRoute from '../components/MapRoute'
+import MapRoute, { travelModeFromPreference } from '../components/MapRoute'
 
 /**
  * ItineraryPage — split-view narrated itinerary.
@@ -86,6 +86,35 @@ export default function ItineraryPage() {
 
   const totalWalk = route?.total_travel_min || 0
 
+  const mapDays = useMemo(
+    () =>
+      (itinerary?.days || []).map((day) => ({
+        dayNumber: day.day,
+        stops: day.stops
+          .map((stop) => {
+            const routeStop = (route?.stops ?? []).find((item) => item.place_id === stop.place_id)
+            if (
+              !routeStop ||
+              typeof routeStop.lat !== 'number' ||
+              typeof routeStop.lng !== 'number'
+            ) {
+              return null
+            }
+            return {
+              id: stop.place_id,
+              name: stop.name,
+              lat: routeStop.lat,
+              lng: routeStop.lng,
+              order: stop.order,
+            }
+          })
+          .filter(Boolean),
+      })),
+    [itinerary, route]
+  )
+
+  const mapTravelMode = travelModeFromPreference(persona?.transit_preference)
+
   return (
     <div className="bg-surface text-on-surface min-h-screen flex flex-col overflow-hidden">
       {/* ── Header ── */}
@@ -101,7 +130,7 @@ export default function ItineraryPage() {
         <nav className="hidden md:flex gap-6 h-full items-center">
           {[
             { label: 'Explore', to: '/' },
-            { label: 'My Trips', active: true },
+            { label: 'My Trips', to: '/trips', active: false },
             { label: 'Saved', to: `/verify?planId=${planId || ''}` },
           ].map(({ label, to, active }) => (
             <a
@@ -202,39 +231,12 @@ export default function ItineraryPage() {
         >
           <div className="absolute inset-0 w-full h-full">
             <MapRoute
-              route={route}
-              stops={displayDays.flatMap((day) => day.stops)}
+              days={mapDays}
+              travelMode={mapTravelMode}
               onPinClick={handlePinClick}
               activeStopId={activeStopId}
+              totalWalkMin={totalWalk}
             />
-          </div>
-
-          <div
-            className="absolute top-6 right-6 bg-surface/90 backdrop-blur-md rounded-2xl p-4 border border-outline-variant/20 flex flex-col gap-2 max-w-xs"
-            style={{ boxShadow: 'var(--shadow-raised)' }}
-          >
-            <h3
-              className="text-lg font-semibold text-primary leading-tight"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
-              Total Route
-            </h3>
-            {route ? (
-              totalWalk > 0 ? (
-                <div className="flex items-center gap-2 text-on-surface-muted text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-body)' }}>
-                  <span className="material-symbols-outlined text-[16px]">directions_walk</span>
-                  {totalWalk} min walking total
-                </div>
-              ) : (
-                <div className="text-xs text-on-surface-muted font-semibold uppercase tracking-wider">
-                  Calculating route...
-                </div>
-              )
-            ) : (
-              <div className="text-xs text-on-surface-muted font-semibold uppercase tracking-wider">
-                Calculating route...
-              </div>
-            )}
           </div>
         </section>
       </main>

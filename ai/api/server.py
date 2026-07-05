@@ -19,6 +19,13 @@ from ai.models.events import PipelineEvent
 from ai.models.tool_usage import load_tool_usage
 from ai.tools.audio_store import load_plan_audio
 from ai.tools.maps import autocomplete_places
+from ai.tools.plan_store import (
+    async_save_plan_snapshot,
+    derive_plan_status,
+    list_plan_summaries,
+    load_plan_snapshot,
+    save_plan_snapshot,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,6 +74,52 @@ def _find_script_in_state(state: dict, place_id: str) -> dict | None:
         if script.get("place_id") == place_id:
             return script
     return None
+
+
+async def _snapshot_session_state(plan_id: str) -> None:
+    """Persist the latest in-memory session to disk for My Trips replay."""
+    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    if session is None:
+        return
+    await async_save_plan_snapshot(plan_id, session.state)
+
+
+async def _ensure_plan_session(plan_id: str) -> dict:
+    """Load a saved plan into the in-memory session when the server restarted."""
+    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    if session is not None:
+        return session.state
+
+    snapshot = load_plan_snapshot(plan_id)
+    if snapshot is None:
+        return {}
+
+    await session_service.create_session(
+        app_name=APP_NAME,
+        user_id="user",
+        session_id=plan_id,
+    )
+    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    if session is None:
+        return snapshot.state
+
+    from google.adk.events import Event, EventActions
+
+    await session_service.append_event(
+        session=session,
+        event=Event(
+            author="system",
+            actions=EventActions(state_delta=snapshot.state),
+        ),
+    )
+    refreshed = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    return {} if refreshed is None else refreshed.state
+
+
+def _ensure_plan_queue(plan_id: str) -> asyncio.Queue:
+    if plan_id not in pipeline_queues:
+        pipeline_queues[plan_id] = asyncio.Queue()
+    return pipeline_queues[plan_id]
 
 
 def _rate_limit_error_message(error: Exception) -> str:
@@ -189,6 +242,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                             progress=progress
                         ).model_dump())
                         emitted_phases.add("profiler_done")
+                        await _snapshot_session_state(plan_id)
                 else:
                     # Clarifying question — surface to user and pause
                     progress = 20
@@ -221,6 +275,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                         progress=progress
                     ).model_dump())
                     emitted_phases.add("itinerary_options")
+                    await _snapshot_session_state(plan_id)
                     if itinerary_payload is None:
                         logger.info(
                             "Pipeline paused at itinerary options for plan %s. "
@@ -241,6 +296,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                         progress=progress
                     ).model_dump())
                     emitted_phases.add("itinerary_done")
+                    await _snapshot_session_state(plan_id)
 
             elif author == "orchestrator":
                 audio_scripts_payload = effective_state.get("audio_scripts")
@@ -262,6 +318,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                                 progress=progress
                             ).model_dump())
                         emitted_phases.add("stop_done")
+                        await _snapshot_session_state(plan_id)
 
             elif author == "logistics":
                 route_payload = effective_state.get("route")
@@ -275,6 +332,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                             progress=progress
                         ).model_dump())
                         emitted_phases.add("logistics_done")
+                        await _snapshot_session_state(plan_id)
 
         # Pipeline run complete
         current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
@@ -285,9 +343,11 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                 "not emitting complete event yet.",
                 plan_id,
             )
+            await _snapshot_session_state(plan_id)
             return
 
         progress = 100
+        await _snapshot_session_state(plan_id)
         await queue.put(PipelineEvent(
             type="complete",
             data=final_state,
@@ -299,6 +359,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         user_message = _rate_limit_error_message(e)
         logger.info("Pipeline user-facing error for plan %s: %s", plan_id, user_message)
         await _persist_pipeline_error(plan_id, user_message)
+        await _snapshot_session_state(plan_id)
         await queue.put(PipelineEvent(
             type="error",
             data={"message": user_message},
@@ -311,6 +372,7 @@ async def create_plan(request: TripRequest):
     plan_id = str(uuid4())
     queue = asyncio.Queue()
     pipeline_queues[plan_id] = queue
+    save_plan_snapshot(plan_id, {"trip_request": request.model_dump(exclude_none=True)})
     asyncio.create_task(run_pipeline(plan_id, request, queue))
     return {"plan_id": plan_id}
 
@@ -489,6 +551,26 @@ async def stream_stop_audio(plan_id: str, place_id: str):
     raise HTTPException(status_code=404, detail="Unsupported audio URL format")
 
 
+@app.get("/api/trips")
+async def list_trips():
+    """List saved trips for the My Trips page — no agent re-run required."""
+    summaries = list_plan_summaries()
+    return {"trips": [summary.model_dump(mode="json") for summary in summaries]}
+
+
+@app.get("/api/plan/{plan_id}")
+async def get_plan(plan_id: str):
+    """Return a saved plan summary + status for direct navigation."""
+    snapshot = load_plan_snapshot(plan_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return {
+        "plan_id": snapshot.plan_id,
+        "status": snapshot.status,
+        "summary": snapshot.summary.model_dump(mode="json"),
+    }
+
+
 @app.get("/api/plan/{plan_id}/tool-usage")
 async def get_tool_usage(plan_id: str):
     current_session = await session_service.get_session(
@@ -503,16 +585,16 @@ async def get_tool_usage(plan_id: str):
 @app.get("/api/plan/{plan_id}/stream")
 async def stream_plan(plan_id: str):
     async def event_generator():
-        if plan_id not in pipeline_queues:
+        state = await _ensure_plan_session(plan_id)
+        snapshot = load_plan_snapshot(plan_id)
+        if not state and snapshot is None:
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'Plan not found'}, 'progress': 100})}\n\n"
             return
 
-        # Replay current state so reconnecting clients (e.g. after page refresh)
-        # catch up immediately without waiting for the next pipeline event.
-        try:
-            current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
-            state = current_session.state
+        queue = _ensure_plan_queue(plan_id)
 
+        # Replay current state so reconnecting clients catch up immediately.
+        try:
             pipeline_error = state.get("pipeline_error")
             if pipeline_error is not None:
                 yield f"data: {json.dumps({'type': 'error', 'data': pipeline_error, 'progress': 100})}\n\n"
@@ -530,16 +612,20 @@ async def stream_plan(plan_id: str):
                     yield f"data: {json.dumps({'type': 'stop_done', 'data': public_script, 'progress': 80})}\n\n"
             if state.get("route") is not None:
                 yield f"data: {json.dumps({'type': 'logistics_done', 'data': state['route'], 'progress': 90})}\n\n"
+
+            status = derive_plan_status(state)
+            if status == "complete":
+                yield f"data: {json.dumps({'type': 'complete', 'data': state, 'progress': 100})}\n\n"
+                return
+            if status in ("awaiting_selection", "planning", "started"):
+                return
         except Exception:
             pass
 
-        queue = pipeline_queues[plan_id]
         while True:
             event = await queue.get()
             yield f"data: {json.dumps(event)}\n\n"
             if event["type"] in ("complete", "error", "profiler_clarification", "itinerary_options"):
-                # Pause the stream here — VerifyPage will re-open it when the
-                # user takes an action (refine or finalize).
                 break
 
     return StreamingResponse(
