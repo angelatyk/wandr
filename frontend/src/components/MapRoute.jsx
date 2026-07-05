@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps'
 
 const API_KEY = import.meta.env.VITE_GOOGLE_CLOUD_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.GOOGLE_JS_API_KEY
@@ -15,6 +15,7 @@ function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.8, strokeWe
       strokeColor,
       strokeOpacity,
       strokeWeight,
+      geodesic: false,
     })
     poly.setMap(map)
     setPolyline(poly)
@@ -22,7 +23,7 @@ function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.8, strokeWe
     return () => {
       poly.setMap(null)
     }
-  }, [map, path, strokeColor, strokeOpacity, strokeWeight])
+  }, [map, strokeColor, strokeOpacity, strokeWeight])
 
   useEffect(() => {
     if (polyline && path) polyline.setPath(path)
@@ -115,7 +116,7 @@ function MapPanController({ activeStopId, validRouteStops }) {
 
   useEffect(() => {
     if (!map || !activeStopId || !validRouteStops?.length) return
-    const stop = validRouteStops.find(s => s.place_id === activeStopId)
+    const stop = validRouteStops.find((s) => String(s.place_id) === String(activeStopId))
     if (stop) {
       map.panTo({ lat: stop.lat, lng: stop.lng })
     }
@@ -124,11 +125,107 @@ function MapPanController({ activeStopId, validRouteStops }) {
   return null
 }
 
-export default function MapRoute({ route, stops = [], onPinClick, activeStopId }) {
-  const validRouteStops = (route?.stops ?? []).filter(
-    (stop) => typeof stop.lat === 'number' && typeof stop.lng === 'number'
+function RoadRoute({ stops, fallbackPath }) {
+  const map = useMap()
+  const [resolvedPath, setResolvedPath] = useState(fallbackPath)
+
+  useEffect(() => {
+    if (!map || !window.google?.maps) return
+
+    if (stops.length < 2) {
+      setResolvedPath(fallbackPath)
+      return
+    }
+
+    let cancelled = false
+    const directionsService = new window.google.maps.DirectionsService()
+    const MAX_POINTS_PER_REQUEST = 25
+
+    const routeRequest = (segmentStops, travelMode) =>
+      new Promise((resolve) => {
+        directionsService.route(
+          {
+            origin: { lat: segmentStops[0].lat, lng: segmentStops[0].lng },
+            destination: {
+              lat: segmentStops[segmentStops.length - 1].lat,
+              lng: segmentStops[segmentStops.length - 1].lng,
+            },
+            waypoints: segmentStops.slice(1, -1).map((stop) => ({
+              location: { lat: stop.lat, lng: stop.lng },
+              stopover: true,
+            })),
+            travelMode,
+            provideRouteAlternatives: false,
+          },
+          (response, status) => {
+            if (status !== window.google.maps.DirectionsStatus.OK || !response?.routes?.[0]?.overview_path?.length) {
+              resolve(null)
+              return
+            }
+
+            resolve(
+              response.routes[0].overview_path.map((point) => ({
+                lat: point.lat(),
+                lng: point.lng(),
+              }))
+            )
+          }
+        )
+      })
+
+    const resolveSegmentedRoute = async (travelMode) => {
+      const mergedPath = []
+
+      for (let start = 0; start < stops.length - 1; ) {
+        const end = Math.min(start + MAX_POINTS_PER_REQUEST - 1, stops.length - 1)
+        const segmentStops = stops.slice(start, end + 1)
+        const segmentPath = await routeRequest(segmentStops, travelMode)
+
+        if (!segmentPath || segmentPath.length < 2) return null
+
+        mergedPath.push(...(mergedPath.length > 0 ? segmentPath.slice(1) : segmentPath))
+        start = end
+      }
+
+      return mergedPath.length > 1 ? mergedPath : null
+    }
+
+    const buildRoadPath = async () => {
+      if (cancelled) return
+      const walkingPath = await resolveSegmentedRoute(window.google.maps.TravelMode.WALKING)
+      if (cancelled) return
+      if (walkingPath) {
+        setResolvedPath(walkingPath)
+        return
+      }
+
+      const drivingPath = await resolveSegmentedRoute(window.google.maps.TravelMode.DRIVING)
+      if (cancelled) return
+      setResolvedPath(drivingPath || fallbackPath)
+    }
+
+    buildRoadPath()
+
+    return () => {
+      cancelled = true
+    }
+  }, [map, stops, fallbackPath])
+
+  return <Polyline path={resolvedPath} />
+}
+
+export default function MapRoute({ route, stops = [], onPinClick, activeStopId = null }) {
+  const validRouteStops = useMemo(
+    () =>
+      (route?.stops ?? []).filter(
+        (stop) => typeof stop.lat === 'number' && typeof stop.lng === 'number'
+      ),
+    [route]
   )
-  const path = validRouteStops.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
+  const fallbackPath = useMemo(
+    () => validRouteStops.map((stop) => ({ lat: stop.lat, lng: stop.lng })),
+    [validRouteStops]
+  )
 
   const handleClick = useCallback(
     (stopId) => {
@@ -166,10 +263,11 @@ export default function MapRoute({ route, stops = [], onPinClick, activeStopId }
           {validRouteStops.length > 0 && <BoundsController stops={validRouteStops} />}
           <MapPanController activeStopId={activeStopId} validRouteStops={validRouteStops} />
 
-          {path.length > 1 && <Polyline path={path} />}
+          {fallbackPath.length > 1 && <RoadRoute stops={validRouteStops} fallbackPath={fallbackPath} />}
 
           {validRouteStops.map((stop, index) => {
-            const stopName = stops.find((candidate) => candidate.id === stop.place_id)?.name || `Stop ${index + 1}`
+            const stopName =
+              stops.find((candidate) => String(candidate.id) === String(stop.place_id))?.name || `Stop ${index + 1}`
             return (
               <LegacyMarker
                 key={stop.place_id}
@@ -177,7 +275,7 @@ export default function MapRoute({ route, stops = [], onPinClick, activeStopId }
                 onClick={() => handleClick(stop.place_id)}
                 title={stopName}
                 labelText={String(index + 1)}
-                isActive={activeStopId === stop.place_id}
+                isActive={String(activeStopId) === String(stop.place_id)}
               />
             )
           })}

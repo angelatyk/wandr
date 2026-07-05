@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, patch
 from ai.tools.exceptions import TTSError
 from ai.tools import tts
 
+# Minimal bytes that pass MP3 header validation in generate_audio().
+_FAKE_MP3_BYTES = b"\xff\xfb\x90\x00" + (b"\x00" * 200)
+
 
 class GenerateAudioPhase2Tests(unittest.IsolatedAsyncioTestCase):
     async def test_returns_inline_audio_when_bucket_is_unconfigured(self) -> None:
@@ -14,7 +17,7 @@ class GenerateAudioPhase2Tests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tts.settings, "google_tts_api_key", "real-tts-key"),
             patch.object(tts.settings, "gcs_bucket_name", "mock-bucket"),
-            patch("ai.tools.tts._synthesize_audio_bytes", new=AsyncMock(return_value=b"mp3-bytes")),
+            patch("ai.tools.tts._synthesize_audio_bytes", new=AsyncMock(return_value=_FAKE_MP3_BYTES)),
             patch("ai.tools.tts._upload_audio_to_gcs", new=upload_mock),
         ):
             audio_url = await tts.generate_audio("hello world", "warm")
@@ -28,7 +31,8 @@ class GenerateAudioPhase2Tests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tts.settings, "google_tts_api_key", "real-tts-key"),
             patch.object(tts.settings, "gcs_bucket_name", "wandr-audio"),
-            patch("ai.tools.tts._synthesize_audio_bytes", new=AsyncMock(return_value=b"mp3-bytes")),
+            patch.object(tts.settings, "tts_prefer_inline", False),
+            patch("ai.tools.tts._synthesize_audio_bytes", new=AsyncMock(return_value=_FAKE_MP3_BYTES)),
             patch("ai.tools.tts._upload_audio_to_gcs", new=upload_mock),
         ):
             audio_url = await tts.generate_audio("hello world", "warm")
@@ -40,7 +44,7 @@ class GenerateAudioPhase2Tests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tts.settings, "google_tts_api_key", "real-tts-key"),
             patch.object(tts.settings, "gcs_bucket_name", "wandr-audio"),
-            patch("ai.tools.tts._synthesize_audio_bytes", new=AsyncMock(return_value=b"mp3-bytes")),
+            patch("ai.tools.tts._synthesize_audio_bytes", new=AsyncMock(return_value=_FAKE_MP3_BYTES)),
             patch(
                 "ai.tools.tts._upload_audio_to_gcs",
                 new=AsyncMock(side_effect=tts._StorageUnavailableError("missing signer")),

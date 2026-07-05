@@ -10,6 +10,7 @@ from google.genai import types
 from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_route
 from ai.models.route import RouteModel, RouteStop
 from ai.models.trip import ItineraryModel, StopModel
+from ai.tools.exceptions import MapsAPIError
 from ai.tools.maps import get_directions, get_place_details
 
 logger = logging.getLogger(__name__)
@@ -41,10 +42,18 @@ async def run_logistics(itinerary: ItineraryModel) -> RouteModel:
         travel_source = "none"
         if index > 0:
             prev = ordered[index - 1]
-            leg = await get_directions(prev.place_id, stop.place_id)
-            travel_min = int(leg.get("duration_min", 0))
-            travel_source = "api" if leg.get("source") == "api" else "mock"
-            total_travel_min += travel_min
+            try:
+                leg = await get_directions(prev.place_id, stop.place_id)
+                travel_min = int(leg.get("duration_min", 0))
+                travel_source = "api" if leg.get("source") == "api" else "none"
+                total_travel_min += travel_min
+            except MapsAPIError as exc:
+                logger.warning(
+                    "Skipping synthetic travel leg for %s -> %s: %s",
+                    prev.place_id,
+                    stop.place_id,
+                    exc,
+                )
 
         route_stops.append(
             RouteStop(

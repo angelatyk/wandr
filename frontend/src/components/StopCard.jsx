@@ -1,3 +1,48 @@
+import { useEffect, useState } from 'react'
+
+function normalizeImageSrc(src) {
+  if (typeof src !== 'string') return null
+  const trimmed = src.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function StopImageFallback({ alt, className }) {
+  return (
+    <div className={[className, 'bg-surface-container text-on-surface-muted flex items-center justify-center'].join(' ')}>
+      <div className="flex flex-col items-center gap-1">
+        <span className="material-symbols-outlined text-[28px]">image</span>
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-body)' }}>
+          {alt ? `${alt} image unavailable` : 'Image unavailable'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function StopImage({ src, alt, className }) {
+  const [resolvedSrc, setResolvedSrc] = useState(() => normalizeImageSrc(src))
+
+  useEffect(() => {
+    setResolvedSrc(normalizeImageSrc(src))
+  }, [src])
+
+  if (!resolvedSrc) {
+    return <StopImageFallback alt={alt} className={className} />
+  }
+
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      onError={() => {
+        setResolvedSrc(null)
+      }}
+    />
+  )
+}
+
 /**
  * StopCard — a single itinerary stop displayed in the timeline.
  *
@@ -33,7 +78,7 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
         <div className="flex flex-col md:flex-row">
           {/* Image */}
           <div className="w-full md:w-1/3 h-48 md:h-auto relative flex-shrink-0">
-            <img
+            <StopImage
               src={stop.image}
               alt={stop.name}
               className={['absolute inset-0 w-full h-full object-cover', removed ? 'grayscale-[40%]' : ''].join(' ')}
@@ -107,7 +152,7 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
         <>
           {/* Image */}
           <div className="relative w-full h-48">
-            <img src={stop.image} alt={stop.name} className="w-full h-full object-cover" />
+            <StopImage src={stop.image} alt={stop.name} className="w-full h-full object-cover" />
             <div className="absolute top-4 right-4 bg-surface/80 backdrop-blur-md rounded-full px-3 py-1 flex items-center gap-2 border border-outline-variant/20">
               <span className="material-symbols-outlined text-secondary text-[16px]">schedule</span>
               <span className="text-xs font-semibold text-on-surface" style={{ fontFamily: 'var(--font-body)' }}>
@@ -126,11 +171,23 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
                 {stop.name}
               </h2>
               <button
-                aria-label={`Play narration for ${stop.name}`}
+                aria-label={
+                  stop.hasAudio
+                    ? `Play narration for ${stop.name}`
+                    : `Narration audio not ready for ${stop.name}`
+                }
                 onClick={onPlay}
-                className="w-10 h-10 rounded-full bg-primary-container text-white flex items-center justify-center hover:bg-primary transition-colors flex-shrink-0"
+                disabled={!stop.hasAudio}
+                className={[
+                  'w-10 h-10 rounded-full flex items-center justify-center transition-colors flex-shrink-0',
+                  stop.hasAudio
+                    ? 'bg-primary-container text-white hover:bg-primary'
+                    : 'bg-surface-container text-on-surface-muted cursor-not-allowed opacity-60',
+                ].join(' ')}
               >
-                <span className="material-symbols-outlined icon-filled text-[20px]">play_arrow</span>
+                <span className="material-symbols-outlined icon-filled text-[20px]">
+                  {stop.hasAudio ? 'play_arrow' : 'hourglass_empty'}
+                </span>
               </button>
             </div>
 
@@ -156,8 +213,10 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
                 className="text-xs font-semibold text-on-surface-muted flex items-center gap-1"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
-                <span className="material-symbols-outlined text-[16px]">headphones</span>
-                {stop.narrationLength} narration
+                <span className="material-symbols-outlined text-[16px]">
+                  {stop.hasAudio ? 'headphones' : 'article'}
+                </span>
+                {stop.hasAudio ? `${stop.narrationLength} narration` : 'Text only — audio pending'}
               </span>
             </div>
           </div>

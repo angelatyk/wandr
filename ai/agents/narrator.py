@@ -8,6 +8,7 @@ from google.genai import Client, types
 from google.genai.errors import ClientError
 from pydantic import ValidationError
 
+from ai.agents.model_fallback import generate_with_fallback
 from ai.config.settings import settings
 from ai.models.audio import AudioScript
 from ai.models.persona import PersonaModel
@@ -17,6 +18,7 @@ from ai.tools.exceptions import TTSError
 from ai.tools.tts import generate_audio
 
 logger = logging.getLogger(__name__)
+_MODEL_FALLBACKS = [m.strip() for m in settings.model_fallbacks.split(",") if m.strip()]
 
 
 def _gemini_client() -> Client:
@@ -38,9 +40,11 @@ def _estimate_duration_sec(script: str) -> int:
     return max(30, min(90, round(word_count / 2.5)))
 
 
-def _audio_source_from_url(audio_url: str) -> Literal["inline", "signed_url", "text_only"]:
+def _audio_source_from_url(audio_url: str) -> Literal["inline", "signed_url", "stored", "text_only"]:
     if not audio_url:
         return "text_only"
+    if audio_url.startswith("/api/plan/"):
+        return "stored"
     if audio_url.startswith("data:audio/"):
         return "inline"
     return "signed_url"
@@ -149,6 +153,8 @@ async def run_narrator(
     stop: StopModel,
     persona: PersonaModel,
     research: StopResearchResult,
+    *,
+    plan_id: str | None = None,
 ) -> AudioScript:
     """Ask Gemini for a narration script, then attach TTS audio when available."""
     if not settings.gemini_api_key:
@@ -159,8 +165,10 @@ async def run_narrator(
 
     client = _gemini_client()
     try:
-        response = await client.aio.models.generate_content(
-            model=settings.model_name,
+        response = await generate_with_fallback(
+            client=client,
+            primary_model=settings.model_name,
+            fallback_models=_MODEL_FALLBACKS,
             contents=[
                 types.Content(
                     role="user",
@@ -172,6 +180,7 @@ async def run_narrator(
                 response_mime_type="application/json",
                 response_schema=AudioScript,
             ),
+            call_label="Narrator.generate_content",
         )
     except ClientError as exc:
         if "API_KEY_SERVICE_BLOCKED" in str(exc):
@@ -205,7 +214,12 @@ async def run_narrator(
         audio = audio.model_copy(update={"duration_sec": _estimate_duration_sec(audio.script)})
 
     try:
-        audio_url = await generate_audio(audio.script, voice_style)
+        audio_url = await generate_audio(
+            audio.script,
+            voice_style,
+            plan_id=plan_id,
+            place_id=stop.place_id,
+        )
         audio = audio.model_copy(
             update={
                 "audio_url": audio_url,
@@ -216,10 +230,11 @@ async def run_narrator(
         logger.warning("TTS failed for %s — returning text-only script: %s", stop.name, exc)
 
     logger.info(
-        "Narration completed for %s (%ds, audio=%s)",
+        "Narration completed for %s (%ds, audio=%s, source=%s)",
         stop.name,
         audio.duration_sec,
         "yes" if audio.audio_url else "text-only",
+        audio.audio_source,
     )
     return audio
 

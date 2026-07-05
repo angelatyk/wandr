@@ -20,7 +20,7 @@ export default function RefinePage() {
   const planId = searchParams.get('planId')
 
   // Subscribe to the backend SSE stream to monitor pipeline progress
-  const { status, clarification } = usePlanStream(planId)
+  const { status, clarification, errorMessage } = usePlanStream(planId)
   
   const [reply, setReply] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -30,11 +30,9 @@ export default function RefinePage() {
       navigate('/')
       return
     }
-    // Auto-advance once the profiler hands off — the itinerary agent will fire next.
-    // awaiting_selection = itinerary options ready for user to review on VerifyPage.
-    // If the profiler had no clarifying questions, this skips the refine page entirely.
+    // Advance only once itinerary options exist — stay on this page while the
+    // profiler/itinerary agents run so we don't mount VerifyPage too early.
     if (
-      status === 'planning' ||
       status === 'awaiting_selection' ||
       status === 'finalised' ||
       status === 'routing' ||
@@ -63,7 +61,8 @@ export default function RefinePage() {
     }
   }
 
-  const isLoading = status === 'initializing' || submitting
+  const isLoading = status === 'initializing' || status === 'planning' || submitting
+  const hasError = status === 'error'
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center relative overflow-x-hidden">
@@ -114,7 +113,11 @@ export default function RefinePage() {
               color: 'var(--wandr-primary)',
             }}
           >
-            {isLoading ? 'Consulting the Oracle...' : 'Just a few more details.'}
+            {isLoading
+              ? 'Consulting the Oracle...'
+              : hasError
+                ? 'Planning paused.'
+                : 'Just a few more details.'}
           </h1>
 
           <p
@@ -127,9 +130,11 @@ export default function RefinePage() {
               textAlign: 'center',
             }}
           >
-            {isLoading 
-              ? 'Our AI travel guide is analyzing your request to craft the perfect itinerary.' 
-              : 'To curate the perfect itinerary, I need a little more direction on your upcoming journey.'}
+            {isLoading
+              ? 'Our AI travel guide is analyzing your request to craft the perfect itinerary.'
+              : hasError
+                ? (errorMessage || 'A temporary issue interrupted planning. Please retry from home.')
+                : 'To curate the perfect itinerary, I need a little more direction on your upcoming journey.'}
           </p>
           
           {isLoading && (
@@ -239,6 +244,30 @@ export default function RefinePage() {
               </button>
             </div>
           </form>
+        )}
+
+        {!isLoading && hasError && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="cursor-pointer"
+              style={{
+                fontFamily: 'var(--font-body)',
+                fontWeight: 600,
+                fontSize: '0.75rem',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: '#ffffff',
+                background: 'var(--wandr-primary-container)',
+                padding: '0.9rem 1.6rem',
+                borderRadius: '0.9rem',
+                border: 'none',
+              }}
+            >
+              Start Over
+            </button>
+          </div>
         )}
       </main>
     </div>

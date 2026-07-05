@@ -9,6 +9,7 @@ from google.genai import Client, types
 from google.genai.errors import ClientError
 from pydantic import ValidationError
 
+from ai.agents.model_fallback import generate_with_fallback
 from ai.config.settings import settings
 from ai.models.persona import PersonaModel
 from ai.models.place import PlaceDetails
@@ -17,6 +18,7 @@ from ai.models.trip import StopModel
 from ai.tools.maps import get_place_details
 
 logger = logging.getLogger(__name__)
+_MODEL_FALLBACKS = [m.strip() for m in settings.model_fallbacks.split(",") if m.strip()]
 
 
 def _gemini_client() -> Client:
@@ -134,8 +136,10 @@ async def run_stop_research(stop: StopModel, persona: PersonaModel) -> StopResea
 
     client = _gemini_client()
     try:
-        response = await client.aio.models.generate_content(
-            model=settings.model_name,
+        response = await generate_with_fallback(
+            client=client,
+            primary_model=settings.model_name,
+            fallback_models=_MODEL_FALLBACKS,
             contents=[
                 types.Content(
                     role="user",
@@ -147,6 +151,7 @@ async def run_stop_research(stop: StopModel, persona: PersonaModel) -> StopResea
                 response_mime_type="application/json",
                 response_schema=StopResearchResult,
             ),
+            call_label="StopResearch.generate_content",
         )
     except ClientError as exc:
         if "API_KEY_SERVICE_BLOCKED" in str(exc):

@@ -10,7 +10,12 @@ from ai.models.trip import ItineraryModel, StopModel
 logger = logging.getLogger(__name__)
 
 
-async def process_single_stop(stop: StopModel, persona: PersonaModel) -> AudioScript:
+async def process_single_stop(
+    stop: StopModel,
+    persona: PersonaModel,
+    *,
+    plan_id: str | None = None,
+) -> AudioScript:
     """Research one stop for this persona, then produce narration."""
     logger.info(
         "Processing stop %s for persona type=%s notes=%r",
@@ -28,12 +33,14 @@ async def process_single_stop(stop: StopModel, persona: PersonaModel) -> AudioSc
         len(research.context_facts),
     )
 
-    return await run_narrator(stop, persona, research)
+    return await run_narrator(stop, persona, research, plan_id=plan_id)
 
 
 async def process_all_stops(
     itinerary: ItineraryModel,
     persona: PersonaModel,
+    *,
+    plan_id: str | None = None,
 ) -> AudioScriptsModel:
     """Fan out (Stop Research → Narrator) for every stop in parallel."""
     stops = [stop for day in itinerary.days for stop in day.stops]
@@ -45,7 +52,7 @@ async def process_all_stops(
         persona.pace,
     )
 
-    tasks = [process_single_stop(stop, persona) for stop in stops]
+    tasks = [process_single_stop(stop, persona, plan_id=plan_id) for stop in stops]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     scripts: list[AudioScript] = []

@@ -17,6 +17,7 @@ class PlacesSearchCounter(ApiMockCounter):
 class TTSCounter(BaseModel):
     inline: int = 0
     signed_url: int = 0
+    stored: int = 0
     text_only: int = 0
 
 
@@ -51,6 +52,7 @@ def merge_tool_usage(base: ToolUsageModel, delta: ToolUsageModel) -> ToolUsageMo
         tts=TTSCounter(
             inline=base.tts.inline + delta.tts.inline,
             signed_url=base.tts.signed_url + delta.tts.signed_url,
+            stored=base.tts.stored + delta.tts.stored,
             text_only=base.tts.text_only + delta.tts.text_only,
         ),
     )
@@ -74,7 +76,9 @@ def usage_from_audio_scripts(scripts: list[AudioScript]) -> ToolUsageModel:
             usage.place_details.mock += 1
 
         if script.tts_attempted:
-            if script.audio_source == "inline":
+            if script.audio_source == "stored":
+                usage.tts.stored += 1
+            elif script.audio_source == "inline":
                 usage.tts.inline += 1
             elif script.audio_source == "signed_url":
                 usage.tts.signed_url += 1

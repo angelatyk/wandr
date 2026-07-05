@@ -27,6 +27,8 @@ export default function ItineraryPage() {
   }
 
   const handlePlay = (stop) => {
+    if (!stop.audioUrl) return
+    setActiveStopId(stop.id)
     setNowPlaying({
       stopId: stop.id,
       title: `${stop.name} — Narration`,
@@ -38,6 +40,7 @@ export default function ItineraryPage() {
 
   const destination = persona?.destination || itinerary?.destination || 'Loading...'
 
+  // Prefer photo_url on final itinerary stops; fall back to options from VerifyPage.
   const imageMap = {}
   if (itineraryOptions?.days) {
     for (const day of itineraryOptions.days) {
@@ -69,13 +72,14 @@ export default function ItineraryPage() {
         id: stop.place_id,
         name: stop.name,
         description: audio ? audio.script : 'Narration is being generated...',
-        image: imageMap[stop.place_id] || 'https://via.placeholder.com/800x600?text=Stop',
+        image: stop.photo_url || imageMap[stop.place_id] || null,
         time: `Stop ${stopNumber}`,
         personaIcon: 'park',
         narrationLength: audio ? `${Math.max(1, Math.round(audio.duration_sec / 60))} min` : '...',
         included: true,
         transit,
-        audioUrl: audio?.audio_url,
+        audioUrl: audio?.audio_url || null,
+        hasAudio: Boolean(audio?.audio_url),
       }
     }),
   }))
@@ -240,7 +244,8 @@ export default function ItineraryPage() {
         <AudioPlayer
           title={nowPlaying.title}
           image={nowPlaying.image}
-          progressPct={nowPlaying.progressPct}
+          audioUrl={nowPlaying.audioUrl}
+          onClose={() => setNowPlaying(null)}
         />
       )}
     </div>

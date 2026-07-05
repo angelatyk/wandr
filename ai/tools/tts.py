@@ -18,6 +18,7 @@ except ImportError:
     storage = None
 
 from ai.config.settings import settings
+from ai.tools.audio_store import save_plan_audio
 from ai.tools.exceptions import TTSError
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ def _voice_config(voice_style: str) -> dict[str, object]:
 
 
 def _uses_mock_tts() -> bool:
-    return settings.google_cloud_api_key.strip() in _MOCK_TTS_KEYS
+    return settings.google_tts_api_key.strip() in _MOCK_TTS_KEYS
 
 
 def _uses_gcs_storage() -> bool:
@@ -215,20 +216,53 @@ async def _upload_audio_to_gcs(
     return await asyncio.to_thread(_upload)
 
 
-async def generate_audio(script: str, voice_style: str) -> str:
-    """Generate MP3 audio and return a signed GCS URL or inline data URL."""
+def _looks_like_mp3(audio_bytes: bytes) -> bool:
+    if len(audio_bytes) < 128:
+        return False
+    if audio_bytes[:3] == b"ID3":
+        return True
+    return audio_bytes[0] == 0xFF and (audio_bytes[1] & 0xE0) == 0xE0
+
+
+async def generate_audio(
+    script: str,
+    voice_style: str,
+    *,
+    plan_id: str | None = None,
+    place_id: str | None = None,
+) -> str:
+    """Generate MP3 audio and return a persisted API URL, signed GCS URL, or inline data URL."""
     if not script or not script.strip():
         raise TTSError("Script is required for audio generation")
 
     if _uses_mock_tts():
         raise TTSError(
-            "GOOGLE_CLOUD_API_KEY is not configured. Set a real Google Cloud API key in .env."
+            "GOOGLE_TTS_API_KEY is not configured. Set a real Google Cloud API key in .env."
         )
 
     audio_bytes = await _synthesize_audio_bytes(script, voice_style)
-    if _uses_gcs_storage():
+    if not _looks_like_mp3(audio_bytes):
+        raise TTSError(
+            f"TTS returned invalid MP3 audio ({len(audio_bytes)} bytes). "
+            "Check that Cloud Text-to-Speech API is enabled for your key."
+        )
+
+    logger.info(
+        "TTS synthesized %d bytes of MP3 audio (voice_style=%s).",
+        len(audio_bytes),
+        voice_style,
+    )
+
+    # Persist to disk whenever we know the plan/stop — survives refresh and server restarts.
+    if plan_id and place_id:
+        return await save_plan_audio(plan_id, place_id, audio_bytes)
+
+    use_gcs = _uses_gcs_storage() and not settings.tts_prefer_inline
+    if use_gcs:
         try:
-            return await _upload_audio_to_gcs(script, voice_style, audio_bytes)
+            signed_url = await _upload_audio_to_gcs(script, voice_style, audio_bytes)
+            logger.info("TTS uploaded audio to GCS (voice_style=%s).", voice_style)
+            return signed_url
         except _StorageUnavailableError as exc:
             logger.warning("GCS upload unavailable, falling back to inline audio: %s", exc)
 

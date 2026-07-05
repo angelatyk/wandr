@@ -72,9 +72,18 @@ class OrchestratorAgent(BaseAgent):
         # because the runner processes each yielded event synchronously before resuming here.
         itinerary_dict = ctx.session.state.get("itinerary")
         persona_dict = ctx.session.state.get("persona")
+        itinerary_options_dict = ctx.session.state.get("itinerary_options")
 
         if not itinerary_dict:
-            logger.info("Itinerary missing — pipeline paused, waiting for user to select options.")
+            if itinerary_options_dict:
+                option_count = sum(len(day.get("options", [])) for day in itinerary_options_dict.get("days", []))
+                logger.info(
+                    "Itinerary missing but itinerary_options exists (%d options). "
+                    "Pipeline paused awaiting user finalize before stop processor/logistics.",
+                    option_count,
+                )
+            else:
+                logger.info("Itinerary missing and no itinerary_options in state — pipeline paused.")
             return
 
         if itinerary_dict and persona_dict:
@@ -90,7 +99,8 @@ class OrchestratorAgent(BaseAgent):
 
             logger.info("Running parallel Stop Processor...")
             # process_all_stops is a plain async function — no ctx passed (pipeline must not touch ADK)
-            audio_scripts = await process_all_stops(itinerary, persona)
+            plan_id = ctx.session.id
+            audio_scripts = await process_all_stops(itinerary, persona, plan_id=plan_id)
             current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
             updated_usage = merge_tool_usage(current_usage, usage_from_audio_scripts(audio_scripts.scripts))
 
@@ -114,6 +124,13 @@ class OrchestratorAgent(BaseAgent):
             logger.error("Missing persona in state — skipping stop processor.")
 
         # 4. Run Logistics — emits state_delta(route) which runner applies to ctx.session.state
+        route_exists = bool(ctx.session.state.get("route"))
+        logger.info(
+            "Preparing logistics run (has_itinerary=%s has_audio_scripts=%s route_already_exists=%s).",
+            bool(ctx.session.state.get("itinerary")),
+            bool(ctx.session.state.get("audio_scripts")),
+            route_exists,
+        )
         logger.info("Running Logistics...")
         async for event in logistics_agent.run_async(ctx):
             yield event

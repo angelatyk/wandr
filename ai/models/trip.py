@@ -7,6 +7,7 @@ class StopModel(BaseModel):
     address: str
     day: int
     order: int
+    photo_url: str = ""
 
 class ItineraryDay(BaseModel):
     day: int

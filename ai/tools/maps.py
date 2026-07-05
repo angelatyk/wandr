@@ -27,7 +27,20 @@ PLACE_DETAILS_FIELD_MASK = (
     "rating,userRatingCount,types,businessStatus,location"
 )
 
-_MOCK_PLACE_KEYS = {"", "mock-google-cloud-key", "your-google-cloud-api-key"}
+_MOCK_PLACE_KEYS = {
+    "",
+    "mock-google-cloud-key",
+    "your-google-cloud-api-key",
+    "mock-places-key",
+    "your-places-api-key",
+}
+_MOCK_ROUTE_KEYS = {
+    "",
+    "mock-google-cloud-key",
+    "your-google-cloud-api-key",
+    "mock-maps-key",
+    "your-maps-api-key",
+}
 _PHOTO_MAX_HEIGHT_PX = 640
 
 _PERSONA_SEARCH_QUERIES: dict[str, tuple[str, ...]] = {
@@ -55,7 +68,11 @@ _PERSONA_SEARCH_QUERIES: dict[str, tuple[str, ...]] = {
 
 
 def _uses_mock_places() -> bool:
-    return settings.google_cloud_api_key.strip() in _MOCK_PLACE_KEYS
+    return (settings.google_places_api_key or "").strip() in _MOCK_PLACE_KEYS
+
+
+def _uses_mock_routes() -> bool:
+    return (settings.google_routes_api_key or "").strip() in _MOCK_ROUTE_KEYS
 
 
 def _format_opening_hours(hours: dict[str, Any] | None) -> str:
@@ -121,7 +138,7 @@ async def _fetch_place_details(place_id: str) -> dict[str, Any]:
     url = PLACES_DETAILS_URL.format(place_id=encoded_id)
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_cloud_api_key,
+        "X-Goog-Api-Key": settings.google_places_api_key,
         "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
     }
 
@@ -153,7 +170,7 @@ async def _fetch_place_photo_url(photo_name: str) -> str:
         }
     )
     url = f"{PLACE_PHOTO_URL.format(photo_name=encoded_name)}?{query}"
-    headers = {"X-Goog-Api-Key": settings.google_cloud_api_key}
+    headers = {"X-Goog-Api-Key": settings.google_places_api_key}
 
     def _get() -> str:
         request = urllib.request.Request(url, headers=headers, method="GET")
@@ -177,7 +194,7 @@ async def _fetch_place_photo_url(photo_name: str) -> str:
 async def _fetch_places_search(query: str, page_size: int) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_cloud_api_key,
+        "X-Goog-Api-Key": settings.google_places_api_key,
         "X-Goog-FieldMask": PLACE_SEARCH_FIELD_MASK,
     }
     body = json.dumps(
@@ -206,7 +223,7 @@ async def _fetch_places_search(query: str, page_size: int) -> dict[str, Any]:
 async def _fetch_places_autocomplete(query: str) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": settings.google_cloud_api_key,
+        "X-Goog-Api-Key": settings.google_places_api_key,
     }
     body = json.dumps(
         {
@@ -243,13 +260,14 @@ async def autocomplete_places(query: str, limit: int = 5) -> list[str]:
         return []
 
     if _uses_mock_places():
-        return [normalized_query]
+        logger.warning("Skipping autocomplete because GOOGLE_CLOUD_API_KEY is not configured.")
+        return []
 
     try:
         payload = await _fetch_places_autocomplete(normalized_query)
     except MapsAPIError as exc:
         logger.warning("Places autocomplete failed for query=%r (%s)", normalized_query, exc)
-        return [normalized_query]
+        return []
 
     suggestions: list[str] = []
     seen: set[str] = set()
@@ -265,10 +283,14 @@ async def autocomplete_places(query: str, limit: int = 5) -> list[str]:
         if len(suggestions) >= limit:
             break
 
-    return suggestions or [normalized_query]
+    return suggestions
 
 
 async def places_search(destination: str, persona_type: str, limit: int = 5) -> list[PlaceSearchResult]:
+    if _uses_mock_places():
+        logger.warning("Skipping place search because GOOGLE_PLACES_API_KEY is not configured.")
+        return []
+
     """Fetch factual place candidates for itinerary planning."""
     if not destination or not destination.strip():
         raise PlaceNotFoundError("destination is required")
@@ -322,6 +344,9 @@ async def places_search(destination: str, persona_type: str, limit: int = 5) -> 
 
 
 async def get_place_details(place_id: str) -> PlaceDetails:
+    if _uses_mock_places():
+        raise MapsAPIError("GOOGLE_PLACES_API_KEY is not configured")
+
     """Fetch opening hours, rating, editorial summary, and types for a place."""
     if not place_id or not place_id.strip():
         raise PlaceNotFoundError("place_id is required")
@@ -354,7 +379,7 @@ async def _fetch_directions(
             "origin": f"place_id:{origin_place_id}",
             "destination": f"place_id:{destination_place_id}",
             "mode": mode,
-            "key": settings.google_cloud_api_key,
+            "key": settings.google_routes_api_key,
         }
     )
     url = f"{MAPS_DIRECTIONS_URL}?{query}"
@@ -381,6 +406,15 @@ async def get_directions(
     """Fetch travel distance and time between places."""
 
 
+    if _uses_mock_routes():
+        logger.warning("Skipping directions lookup because GOOGLE_ROUTES_API_KEY is not configured.")
+        return {
+            "duration_min": 0,
+            "distance_m": 0,
+            "mode": mode,
+            "source": "none",
+        }
+
     try:
         payload = await _fetch_directions(origin_place_id, destination_place_id, mode)
         route = (payload.get("routes") or [{}])[0]
@@ -401,14 +435,14 @@ async def get_directions(
         }
     except MapsAPIError as exc:
         logger.warning(
-            "Directions lookup failed for %s -> %s (%s); using fallback duration.",
+            "Directions lookup failed for %s -> %s (%s); returning no synthetic duration.",
             origin_place_id,
             destination_place_id,
             exc,
         )
         return {
-            "duration_min": _DEFAULT_WALK_MIN,
-            "distance_m": _DEFAULT_WALK_MIN * 80,
+            "duration_min": 0,
+            "distance_m": 0,
             "mode": mode,
-            "source": "fallback",
+            "source": "none",
         }

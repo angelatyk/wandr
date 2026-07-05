@@ -19,7 +19,7 @@ export default function VerifyPage() {
   const [searchParams] = useSearchParams()
   const planId = searchParams.get('planId')
 
-  const { itineraryOptions, status, persona, reconnect } = usePlanStream(planId)
+  const { itineraryOptions, status, errorMessage, persona, reconnect } = usePlanStream(planId)
 
   // confirmed: Set of place_ids the user has toggled ON
   const [confirmed, setConfirmed] = useState(new Set())
@@ -99,7 +99,10 @@ export default function VerifyPage() {
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
-  const isLoading = !itineraryOptions || actionStatus !== null
+  const hasError = status === 'error'
+  const optionDays = Array.isArray(itineraryOptions?.days) ? itineraryOptions.days : []
+  const hasOptions = optionDays.length > 0
+  const isLoading = (!hasOptions && !hasError) || actionStatus !== null
 
   const loadingMessage = (() => {
     if (actionStatus === 'refining') return 'Refining your itinerary…'
@@ -108,9 +111,9 @@ export default function VerifyPage() {
   })()
 
   // ── Derived counts ─────────────────────────────────────────────────────────
-  const totalOptions = itineraryOptions?.days?.reduce(
+  const totalOptions = optionDays.reduce(
     (acc, d) => acc + (d.options?.length ?? 0), 0
-  ) ?? 0
+  )
   const confirmedCount = confirmed.size
 
   const destination = itineraryOptions?.destination ?? persona?.destination ?? ''
@@ -177,6 +180,23 @@ export default function VerifyPage() {
           </div>
         )}
 
+        {hasError && (
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
+            <span className="material-symbols-outlined text-5xl text-primary">warning</span>
+            <p className="text-base text-on-surface-muted" style={{ fontFamily: 'var(--font-body)' }}>
+              {errorMessage || 'A temporary issue interrupted itinerary generation.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="bg-primary text-white font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              Start Over
+            </button>
+          </div>
+        )}
+
         {/* Options list */}
         {!isLoading && (
           <div className="relative pl-8 md:pl-12">
@@ -186,10 +206,10 @@ export default function VerifyPage() {
               style={{ background: 'linear-gradient(to bottom, var(--wandr-primary), transparent)' }}
             />
 
-            {itineraryOptions.days.map((day) => (
+            {optionDays.map((day) => (
               <div key={day.day} className="mb-6">
                 {/* Day label */}
-                {(itineraryOptions.days?.length ?? 0) > 1 && (
+                {optionDays.length > 1 && (
                   <div className="relative mb-6">
                     <div className="absolute -left-10 md:-left-6 top-1 w-4 h-4 rounded-full bg-secondary-container border-2 border-surface" />
                     <h3
@@ -203,7 +223,7 @@ export default function VerifyPage() {
 
                 {/* Place option cards */}
                 <div className="flex flex-col gap-6">
-                  {day.options.map((place) => {
+                  {(day.options ?? []).map((place) => {
                     const isConfirmed = confirmed.has(place.place_id)
                     return (
                       <div key={place.place_id} className="relative">
@@ -355,10 +375,10 @@ export default function VerifyPage() {
                 id="refine-input"
                 rows={1}
                 className="w-full bg-surface-container-low border-none rounded-xl py-3 pl-4 pr-12 text-base focus:ring-1 focus:ring-primary resize-none"
-                placeholder={isLoading ? 'Please wait…' : 'Tell me how else I can make your trip better…'}
+                placeholder={isLoading || hasError ? 'Please wait…' : 'Tell me how else I can make your trip better…'}
                 value={refineText}
                 onChange={(e) => setRefineText(e.target.value)}
-                disabled={isLoading}
+                disabled={isLoading || hasError}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
@@ -368,7 +388,7 @@ export default function VerifyPage() {
               />
               <button
                 type="submit"
-                disabled={!refineText.trim() || isLoading}
+                disabled={!refineText.trim() || isLoading || hasError}
                 className="absolute right-2 p-2 text-primary hover:text-primary-tint transition-colors flex items-center justify-center disabled:opacity-40"
                 aria-label="Submit refinement"
               >
@@ -382,7 +402,7 @@ export default function VerifyPage() {
         <button
           id="finalize-itinerary-btn"
           onClick={handleFinalize}
-          disabled={isLoading || confirmedCount === 0}
+          disabled={isLoading || hasError || confirmedCount === 0}
           className="pointer-events-auto bg-primary text-white font-semibold text-xs uppercase tracking-widest px-8 py-4 rounded-2xl flex items-center justify-center min-w-[280px] gap-2 active:scale-95 transition-all hover:bg-primary-tint shadow-[0px_8px_32px_rgba(10,25,47,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ fontFamily: 'var(--font-body)' }}
         >

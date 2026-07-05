@@ -11,6 +11,7 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.genai import Client, types
 from pydantic import ValidationError
 
+from ai.agents.model_fallback import generate_with_fallback
 from ai.models.place import PlaceSearchResult
 from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_places_search
 from ai.models.trip import (
@@ -114,6 +115,7 @@ Output ONLY a raw JSON object matching this schema:
             "place_id": "<same id from options>",
             "name": "<place name>",
             "address": "<address>",
+            "photo_url": "<copy from candidate or confirmed place>",
             "day": 1,
             "order": 1
           }}
@@ -125,6 +127,7 @@ Output ONLY a raw JSON object matching this schema:
 """
 
 _client = Client()
+_MODEL_FALLBACKS = [m.strip() for m in settings.model_fallbacks.split(",") if m.strip()]
 
 
 def _build_confirmed_section(confirmed: list[dict]) -> str:
@@ -357,6 +360,35 @@ def _normalize_options(
     return ItineraryOptionsModel(destination=destination, days=days)
 
 
+def _photo_lookup(confirmed: list[dict], candidates: list[PlaceSearchResult]) -> dict[str, str]:
+    """Build place_id → photo_url map from confirmed selections and search candidates."""
+    photos: dict[str, str] = {}
+    for place in confirmed:
+        place_id = place.get("place_id")
+        photo_url = place.get("photo_url")
+        if place_id and photo_url:
+            photos[place_id] = photo_url
+    for candidate in candidates:
+        if candidate.place_id and candidate.photo_url and candidate.place_id not in photos:
+            photos[candidate.place_id] = candidate.photo_url
+    return photos
+
+
+def _enrich_itinerary_photos(itinerary: ItineraryModel, photos: dict[str, str]) -> ItineraryModel:
+    """Fill missing stop photo_url values from persisted place photos."""
+    if not photos:
+        return itinerary
+
+    enriched_days: list[ItineraryDay] = []
+    for day in itinerary.days:
+        enriched_stops = [
+            stop.model_copy(update={"photo_url": stop.photo_url or photos.get(stop.place_id, "")})
+            for stop in day.stops
+        ]
+        enriched_days.append(ItineraryDay(day=day.day, stops=enriched_stops))
+    return ItineraryModel(destination=itinerary.destination, days=enriched_days)
+
+
 def _build_final_itinerary(destination: str, confirmed: list[dict]) -> ItineraryModel:
     grouped: dict[int, list[dict]] = defaultdict(list)
     for place in confirmed:
@@ -370,6 +402,7 @@ def _build_final_itinerary(destination: str, confirmed: list[dict]) -> Itinerary
                 place_id=place["place_id"],
                 name=place.get("name", "Unknown"),
                 address=place.get("address", "Unknown"),
+                photo_url=place.get("photo_url", ""),
                 day=day_number,
                 order=index,
             )
@@ -386,13 +419,16 @@ async def _call_model(
     system_prompt: str,
 ) -> str:
     """Single Gemini call; returns stripped response text."""
-    response = await _client.aio.models.generate_content(
-        model=settings.model_name,
+    response = await generate_with_fallback(
+        client=_client,
+        primary_model=settings.model_name,
+        fallback_models=_MODEL_FALLBACKS,
         contents=history,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
         ),
+        call_label="Itinerary.generate_content",
     )
     return (response.text or "").strip()
 
@@ -591,6 +627,12 @@ class ItineraryAgent(BaseAgent):
             options_dict = options.model_dump()
             options_json = json.dumps({"mode": "options", "data": options_dict})
 
+            place_photos = dict(ctx.session.state.get("place_photos") or {})
+            for day_opt in options.days:
+                for place in day_opt.options:
+                    if place.place_id and place.photo_url:
+                        place_photos[place.place_id] = place.photo_url
+
             # Write options to state so reconnecting SSE clients and the server
             # can broadcast an itinerary_options event.  We do NOT write to
             # "itinerary" here — that key is reserved for the finalised itinerary
@@ -600,6 +642,7 @@ class ItineraryAgent(BaseAgent):
                 actions=EventActions(
                     state_delta={
                         "itinerary_options": options_dict,
+                        "place_photos": place_photos,
                         "tool_usage": updated_usage.model_dump(),
                     }
                 ),
@@ -619,6 +662,11 @@ class ItineraryAgent(BaseAgent):
                     content=types.Content(role="model", parts=[types.Part(text=raw)]),
                 )
                 return
+
+            itinerary = _enrich_itinerary_photos(
+                itinerary,
+                _photo_lookup(confirmed, search_candidates),
+            )
 
             logger.info("Itinerary finalised for '%s' (%d days):", itinerary.destination, len(itinerary.days))
             for day in itinerary.days:

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import AsyncGenerator
 
 from google.adk.agents import BaseAgent
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 
 from ai.models.persona import PersonaModel
 from ai.config.settings import settings
+from ai.agents.model_fallback import generate_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -71,18 +73,224 @@ Rules for each field:
 """
 
 _client = Client()
+_MODEL_FALLBACKS = [m.strip() for m in settings.model_fallbacks.split(",") if m.strip()]
 
 
 def _extract_json(raw: str) -> str | None:
     """
-    Pull the outermost JSON object from raw text.
+    Pull the first balanced JSON object from raw text.
     Returns the JSON string if found, None otherwise.
     """
     start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return raw[start : end + 1]
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return raw[start : i + 1]
+
     return None
+
+
+def _normalise_enum(value: str | None, mapping: dict[str, str], fallback: str) -> str:
+    if not value:
+        return fallback
+    v = value.strip().lower()
+    return mapping.get(v, fallback)
+
+
+def _extract_named_fields(text: str) -> dict[str, str]:
+    """
+    Extract structured fields from run_pipeline's message format:
+      Destination: ...
+      Duration: ...
+      Current location: ...
+    """
+    extracted: dict[str, str] = {}
+    field_patterns = {
+        "destination": r"(?mi)^Destination:\s*(.+)$",
+        "duration": r"(?mi)^Duration:\s*(.+)$",
+        "current_location": r"(?mi)^Current location:\s*(.+)$",
+        "transit_preference": r"(?mi)^Transit preference:\s*(.+)$",
+        "notes": r"(?mi)^Vibe/Description:\s*(.+)$",
+    }
+    for key, pattern in field_patterns.items():
+        match = re.search(pattern, text)
+        if match:
+            extracted[key] = match.group(1).strip()
+
+    # Handle common unlabelled shorthand from free-form messages
+    # (e.g. "Tokyo for 3 days", "3 days in Tokyo").
+    if "destination" not in extracted or "duration" not in extracted:
+        patterns = [
+            (
+                r"(?i)\b(?:in|to|visit(?:ing)?|explore|around)\s+([A-Za-z][A-Za-z\s\-.']{1,80}?)\s+for\s+(\d+\s*(?:hours?|hrs?|days?|weeks?|months?))\b",
+                "destination_first",
+            ),
+            (
+                r"(?i)\bfor\s+(\d+\s*(?:hours?|hrs?|days?|weeks?|months?))\s+(?:in|at)\s+([A-Za-z][A-Za-z\s\-.']{1,80})\b",
+                "duration_first",
+            ),
+        ]
+        for pattern, order in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            if order == "destination_first":
+                destination_candidate = match.group(1).strip()
+                duration_candidate = match.group(2).strip()
+            else:
+                duration_candidate = match.group(1).strip()
+                destination_candidate = match.group(2).strip()
+            if "destination" not in extracted and destination_candidate:
+                extracted["destination"] = destination_candidate
+            if "duration" not in extracted and duration_candidate:
+                extracted["duration"] = duration_candidate
+            break
+    return extracted
+
+
+def _duration_is_short(duration: str | None) -> bool:
+    """
+    Consider hour-scale durations as potentially impossible for international travel.
+    """
+    if not duration:
+        return False
+    duration_lower = duration.lower()
+    if "hour" in duration_lower or "hr" in duration_lower:
+        return True
+    return False
+
+
+def _looks_impossible_trip(
+    current_location: str | None,
+    destination: str | None,
+    duration: str | None,
+) -> bool:
+    """
+    Keep a safeguard for impossible requests, but only with high confidence.
+    We only flag when:
+      - duration is hour-scale
+      - both locations provide explicit country suffixes that differ
+    """
+    if not (_duration_is_short(duration) and current_location and destination):
+        return False
+
+    def country_suffix(loc: str) -> str | None:
+        parts = [p.strip().lower() for p in loc.split(",") if p.strip()]
+        if len(parts) >= 2:
+            return parts[-1]
+        return None
+
+    current_country = country_suffix(current_location)
+    destination_country = country_suffix(destination)
+    if current_country and destination_country and current_country != destination_country:
+        return True
+    return False
+
+
+def _persona_from_json_or_none(raw: str) -> PersonaModel | None:
+    json_str = _extract_json(raw)
+    if not json_str:
+        return None
+
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Normalise common enum variants before strict model validation.
+    data["transit_preference"] = _normalise_enum(
+        data.get("transit_preference"),
+        {
+            "drive": "driving",
+            "car": "driving",
+            "driving": "driving",
+            "public transit": "transit",
+            "public_transport": "transit",
+            "transit": "transit",
+            "subway": "transit",
+            "bus": "transit",
+            "walk": "walking",
+            "walking": "walking",
+            "mixed": "mixed",
+            "either": "mixed",
+            "any": "mixed",
+        },
+        "mixed",
+    )
+    data["type"] = _normalise_enum(
+        data.get("type"),
+        {
+            "foodie": "foodie",
+            "artist": "artist",
+            "historian": "historian",
+            "adventurer": "adventurer",
+            "adventure": "adventurer",
+            "local-life": "local-life",
+            "local life": "local-life",
+            "local": "local-life",
+        },
+        "adventurer",
+    )
+    data["pace"] = _normalise_enum(
+        data.get("pace"),
+        {
+            "relaxed": "relaxed",
+            "slow": "relaxed",
+            "moderate": "moderate",
+            "balanced": "moderate",
+            "packed": "packed",
+            "fast": "packed",
+        },
+        "moderate",
+    )
+    data["budget"] = _normalise_enum(
+        data.get("budget"),
+        {
+            "budget": "budget",
+            "cheap": "budget",
+            "mid": "mid",
+            "moderate": "mid",
+            "mid-range": "mid",
+            "luxury": "luxury",
+            "high": "luxury",
+            "premium": "luxury",
+        },
+        "mid",
+    )
+    if "notes" not in data or data["notes"] is None:
+        data["notes"] = ""
+
+    try:
+        return PersonaModel.model_validate(data)
+    except ValidationError:
+        return None
 
 
 class ProfilerAgent(BaseAgent):
@@ -116,46 +324,122 @@ class ProfilerAgent(BaseAgent):
         last_user_msg = next((m.parts[0].text for m in reversed(history) if m.role == "user" and m.parts), "Unknown")
         logger.info("Profiler processing user prompt: %s", last_user_msg)
 
-        response = await _client.aio.models.generate_content(
-            model=settings.model_name,
+        response = await generate_with_fallback(
+            client=_client,
+            primary_model=settings.model_name,
+            fallback_models=_MODEL_FALLBACKS,
             contents=history,
             config=types.GenerateContentConfig(
                 system_instruction=PROFILER_SYSTEM_PROMPT,
             ),
+            call_label="Profiler.generate_content",
         )
 
         raw = (response.text or "").strip()
         logger.debug("Profiler raw LLM output: %s", raw)
 
         # Try to interpret the response as a PersonaModel JSON.
-        json_str = _extract_json(raw)
-        persona: PersonaModel | None = None
-        if json_str:
-            try:
-                persona = PersonaModel.model_validate_json(json_str)
-            except (ValidationError, ValueError) as exc:
-                logger.warning("Profiler output looked like JSON but failed validation: %s", exc)
+        persona = _persona_from_json_or_none(raw)
+        if persona is None:
+            logger.warning("Profiler output was not a valid persona JSON. raw=%s", raw)
+
+        # Fallback path: if required fields are present in the structured user payload and
+        # request is not clearly impossible, force one strict JSON retry instead of clarifying.
+        combined_user_text = "\n".join(
+            m.parts[0].text for m in history if m.role == "user" and m.parts and m.parts[0].text
+        )
+        fields = _extract_named_fields(combined_user_text)
+        has_required_fields = bool(fields.get("destination")) and bool(fields.get("duration"))
+        impossible_trip = _looks_impossible_trip(
+            fields.get("current_location"),
+            fields.get("destination"),
+            fields.get("duration"),
+        )
+        logger.info(
+            "Profiler structured extraction: has_required=%s impossible_trip=%s destination=%r duration=%r current_location=%r",
+            has_required_fields,
+            impossible_trip,
+            fields.get("destination"),
+            fields.get("duration"),
+            fields.get("current_location"),
+        )
+
+        if persona is None and has_required_fields and not impossible_trip:
+            retry_prompt = (
+                "Output only a JSON object for PersonaModel using these guaranteed fields:\n"
+                f'- destination: "{fields["destination"]}"\n'
+                f'- duration: "{fields["duration"]}"\n'
+                f'- current_location: "{fields.get("current_location", "")}"\n'
+                f'- transit_preference: "{fields.get("transit_preference", "mixed")}"\n'
+                f'- notes: "{fields.get("notes", "")}"\n'
+                "Fill missing persona dimensions with sensible defaults if uncertain."
+            )
+            retry_response = await generate_with_fallback(
+                client=_client,
+                primary_model=settings.model_name,
+                fallback_models=_MODEL_FALLBACKS,
+                contents=[types.Content(role="user", parts=[types.Part(text=retry_prompt)])],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+                call_label="Profiler.retry_generate_content",
+            )
+            retry_raw = (retry_response.text or "").strip()
+            logger.debug("Profiler retry raw output: %s", retry_raw)
+            persona = _persona_from_json_or_none(retry_raw)
+
+        if persona is None and has_required_fields and not impossible_trip:
+            # Last-resort deterministic fallback to avoid false clarification loops.
+            persona = PersonaModel(
+                destination=fields["destination"],
+                duration=fields["duration"],
+                current_location=fields.get("current_location"),
+                transit_preference=_normalise_enum(
+                    fields.get("transit_preference"),
+                    {
+                        "drive": "driving",
+                        "car": "driving",
+                        "driving": "driving",
+                        "public transit": "transit",
+                        "transit": "transit",
+                        "walk": "walking",
+                        "walking": "walking",
+                        "mixed": "mixed",
+                    },
+                    "mixed",
+                ),
+                type="adventurer",
+                pace="moderate",
+                budget="mid",
+                notes=fields.get("notes", ""),
+            )
+            logger.info(
+                "Profiler used deterministic fallback persona for complete request: %s",
+                persona.model_dump(),
+            )
 
         if persona is not None:
             # We have a valid persona — write it to state and let the pipeline continue.
             logger.info("Profiler successfully resolved persona: %s", persona.model_dump())
+            payload_text = json.dumps(persona.model_dump())
             yield Event(
                 author=self.name,
                 actions=EventActions(state_delta={"persona": persona.model_dump()}),
                 content=types.Content(
                     role="model",
-                    parts=[types.Part(text=raw)],
+                    parts=[types.Part(text=payload_text)],
                 ),
             )
         else:
             # The model asked a clarifying question — surface it to the user.
             # Nothing is written to state, so the orchestrator knows to pause.
-            logger.info("Profiler is asking a clarifying question: %s", raw)
+            clarification_text = raw or "Where are you heading, and how much time do you have?"
+            logger.info("Profiler is asking a clarifying question: %s", clarification_text)
             yield Event(
                 author=self.name,
                 content=types.Content(
                     role="model",
-                    parts=[types.Part(text=raw)],
+                    parts=[types.Part(text=clarification_text)],
                 ),
             )
 

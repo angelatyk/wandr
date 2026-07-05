@@ -11,6 +11,7 @@ export function usePlanStream(planId) {
   const [stops, setStops] = useState([])
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState('initializing')
+  const [errorMessage, setErrorMessage] = useState(null)
   const [clarification, setClarification] = useState(null)
   const [itineraryOptions, setItineraryOptions] = useState(null)
   const [itinerary, setItinerary] = useState(null)
@@ -40,16 +41,26 @@ export function usePlanStream(planId) {
           if (event.type === 'profiler_clarification') {
             setStatus('needs_clarification')
             setClarification(event.data.message)
+            setErrorMessage(null)
             es.close()
 
           } else if (event.type === 'profiler_done') {
             setStatus('planning')
             setPersona(event.data)
+            setErrorMessage(null)
 
           } else if (event.type === 'itinerary_options') {
             // Options are ready — show VerifyPage, stream pauses here
+            const days = event.data?.days
+            if (!Array.isArray(days) || days.length === 0) {
+              setStatus('error')
+              setErrorMessage('Itinerary options arrived without any places. Please retry.')
+              es.close()
+              return
+            }
             setStatus('awaiting_selection')
             setItineraryOptions(event.data)
+            setErrorMessage(null)
             es.close()
 
           } else if (event.type === 'itinerary_done') {
@@ -69,10 +80,12 @@ export function usePlanStream(planId) {
 
           } else if (event.type === 'complete') {
             setStatus('complete')
+            setErrorMessage(null)
             es.close()
 
           } else if (event.type === 'error') {
             setStatus('error')
+            setErrorMessage(event.data?.message || 'The trip pipeline failed. Please try again.')
             es.close()
           }
         } catch (err) {
@@ -83,6 +96,7 @@ export function usePlanStream(planId) {
       es.onerror = (err) => {
         console.error('SSE Error:', err)
         setStatus('error')
+        setErrorMessage('Connection lost while streaming trip updates. Please retry.')
         es.close()
       }
     }
@@ -100,5 +114,5 @@ export function usePlanStream(planId) {
     if (reconnectRef.current) reconnectRef.current()
   }
 
-  return { stops, progress, status, clarification, itineraryOptions, itinerary, route, persona, reconnect }
+  return { stops, progress, status, errorMessage, clarification, itineraryOptions, itinerary, route, persona, reconnect }
 }
