@@ -21,7 +21,7 @@ Using a 6-agent pipeline built on Google ADK, Wandr ingests your trip preference
 - Python (v3.12 is required for Google ADK and `asyncio` task handling)
 - Node.js (v20.19.0+)
 - Google Cloud account with access to Secret Manager and Cloud Storage
-- API Keys for Google Places, Google Maps Directions, and Google Cloud TTS
+- A Google Cloud API Key (with access to Places, Maps Directions, and Cloud TTS)
 - A Google Gemini API Key
 
 ### 1. Clone & Install
@@ -34,8 +34,12 @@ cd wandr
 No secrets are committed to the repository. The backend uses `pydantic-settings` to load from a `.env` file or Google Cloud Secret Manager. Create a `.env` inside the `ai/` directory:
 ```env
 # ai/.env
-GOOGLE_MAPS_API_KEY=your_maps_api_key
-GOOGLE_TTS_API_KEY=your_tts_api_key
+GEMINI_API_KEY=your_gemini_api_key
+GOOGLE_CLOUD_API_KEY=your_google_cloud_api_key
+# (Optional) Specific keys if different from the Cloud API key:
+# GOOGLE_PLACES_API_KEY=your_places_key
+# GOOGLE_ROUTES_API_KEY=your_routes_key
+# GOOGLE_TTS_API_KEY=your_tts_key
 GCS_BUCKET_NAME=your_gcs_bucket_name
 MODEL_NAME=gemini-2.5-flash
 ```
@@ -82,10 +86,10 @@ Profiler ───────────────────────�
     │                                  └─ If missing: Asks clarifying questions on RefinePage.jsx
     ↓
 Itinerary ─────────────────────────── reads: persona
-                                       writes: session.state["suggestions"] (listed on VerifyPage.jsx)
+                                       writes: session.state["itinerary_options"] (listed on VerifyPage.jsx)
                                        └─ Refinement textbox on VerifyPage.jsx gets Itinerary to regenerate
     ↓
-VerifyPage finalize 
+VerifyPage finalize ───────────────── writes: session.state["itinerary"]
     ↓
 Parallel Execution (Run Concurrently)
     ├── Logistics Agent ───────────── reads: finalized itinerary selection
