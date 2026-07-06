@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://wandr-backend-1066178745473.us-central1.run.app/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
