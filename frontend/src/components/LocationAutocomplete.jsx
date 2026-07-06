@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { LOCATION_TEXT_MAX } from '../constants/inputLimits'
 
 export default function LocationAutocomplete({ 
   id, 
@@ -46,6 +47,7 @@ export default function LocationAutocomplete({
       <input
         id={id}
         type="text"
+        maxLength={LOCATION_TEXT_MAX}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}

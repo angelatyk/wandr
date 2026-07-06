@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     # Comma-separated origins for CORS — tighten before production deploy
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # Abuse / cost controls
+    rate_limit_enabled: bool = True
+    plan_rate_limit_max: int = 10
+    plan_rate_limit_window_seconds: int = 60
+    autocomplete_rate_limit_max: int = 60
+    autocomplete_rate_limit_window_seconds: int = 60
+    max_concurrent_pipelines_per_user: int = 1
+    max_concurrent_pipelines_global: int = 8
+
+    # Per-agent Gemini output caps (input caps live in ai/models/input_limits.py).
+    gemini_max_output_tokens_profiler: int = 1024
+    gemini_max_output_tokens_itinerary: int = 8192
+    gemini_max_output_tokens_stop_research: int = 2048
+    gemini_max_output_tokens_narrator: int = 2048
+
     class Config:
         env_file = ".env"
         extra = "ignore"

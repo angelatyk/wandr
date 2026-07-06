@@ -81,5 +81,6 @@ lerna-debug.log*
 .adk/
 ai/.adk/
 ai/agents/.adk/
+adk_apps/
 .python-version
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { FREE_TEXT_MAX } from '../constants/inputLimits'
 import { usePlanStream } from '../hooks/usePlanStream'
 
 function parseDurationString(str) {
@@ -481,6 +482,7 @@ export default function VerifyPage() {
               <textarea
                 id="refine-input"
                 rows={1}
+                maxLength={FREE_TEXT_MAX}
                 className="w-full bg-surface-container-low border-none rounded-xl py-3 pl-4 pr-12 text-base focus:ring-1 focus:ring-primary resize-none"
                 placeholder={isLoading || hasError ? 'Please wait…' : 'Tell me how else I can make your trip better…'}
                 value={refineText}

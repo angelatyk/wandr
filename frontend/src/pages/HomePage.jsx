@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { FREE_TEXT_MAX } from "../constants/inputLimits";
 import TopNav from "../components/TopNav";
 import Footer from "../components/Footer";
 import PersonaGrid from "../components/PersonaGrid";
@@ -184,6 +185,7 @@ export default function HomePage() {
                   <textarea
                     id="vibe"
                     rows={3}
+                    maxLength={FREE_TEXT_MAX}
                     placeholder="Describe your perfect trip, tell me where you want to explore, or use the fields below."
                     value={vibe}
                     onChange={(e) => setVibe(e.target.value)}
