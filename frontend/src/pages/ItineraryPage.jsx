@@ -40,6 +40,18 @@ export default function ItineraryPage() {
 
   const destination = persona?.destination || itinerary?.destination || 'Loading...'
 
+  const optionMap = useMemo(() => {
+    const map = {}
+    if (itineraryOptions?.days) {
+      for (const day of itineraryOptions.days) {
+        for (const option of (day.options || [])) {
+          map[option.place_id] = option
+        }
+      }
+    }
+    return map
+  }, [itineraryOptions])
+
   // Prefer photo_url on final itinerary stops; fall back to options from VerifyPage.
   const imageMap = {}
   if (itineraryOptions?.days) {
@@ -68,10 +80,12 @@ export default function ItineraryPage() {
         }
       }
 
+      const option = optionMap[stop.place_id] || {}
       return {
         id: stop.place_id,
         name: stop.name,
-        description: audio ? audio.script : 'Narration is being generated...',
+        description: option.description || 'Description unavailable',
+        suggestedDuration: option.suggested_duration || null,
         image: stop.photo_url || imageMap[stop.place_id] || null,
         time: `Stop ${stopNumber}`,
         personaIcon: 'park',
@@ -234,11 +248,11 @@ export default function ItineraryPage() {
                           onViewMap={() => handlePinClick(stop.id)}
                         />
 
-                        {stop.transit && (
-                          <div className="mt-4 flex items-center gap-3 text-on-surface-muted ml-2">
-                            <span className="material-symbols-outlined text-[18px]">{stop.transit.icon}</span>
+                        {idx < arr.length - 1 && arr[idx + 1].transit && (
+                          <div className="mt-6 flex items-center gap-3 text-on-surface-muted ml-2 relative z-10">
+                            <span className="material-symbols-outlined text-[18px]">{arr[idx + 1].transit.icon}</span>
                             <span className="text-xs font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-body)' }}>
-                              {stop.transit.label}
+                              {arr[idx + 1].transit.label}
                             </span>
                           </div>
                         )}

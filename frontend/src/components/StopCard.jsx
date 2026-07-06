@@ -218,6 +218,18 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
                 </span>
                 {stop.hasAudio ? `${stop.narrationLength} narration` : 'Text only — audio pending'}
               </span>
+              {stop.suggestedDuration && (
+                <>
+                  <span className="text-outline-variant">|</span>
+                  <span
+                    className="text-xs font-semibold text-on-surface-muted flex items-center gap-1 capitalize"
+                    style={{ fontFamily: 'var(--font-body)' }}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">schedule</span>
+                    {stop.suggestedDuration}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </>
