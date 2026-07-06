@@ -148,8 +148,10 @@ def max_stops_for_duration(parsed: ParsedDuration) -> int:
     return max(4, min(10, parsed.day_count * 5))
 
 
-def max_options_per_day(parsed: ParsedDuration, day_count: int) -> int:
+def max_options_per_day(parsed: ParsedDuration, day_count: int, confirmed_count: int = 0) -> int:
     """How many place options to surface per day in options mode."""
     if parsed.is_single_outing and parsed.total_hours:
-        return max(5, min(12, int(parsed.total_hours * 1.5)))
-    return max(5, min(10, 4 + day_count))
+        base = max(5, min(12, int(parsed.total_hours * 1.5)))
+    else:
+        base = max(5, min(10, 4 + day_count))
+    return max(base, confirmed_count + 3)

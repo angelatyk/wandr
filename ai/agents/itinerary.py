@@ -151,9 +151,9 @@ def _build_candidate_section(candidates: list[PlaceSearchResult]) -> str:
     return "\n".join(lines)
 
 
-def _build_duration_rules(parsed: ParsedDuration) -> str:
+def _build_duration_rules(parsed: ParsedDuration, confirmed_count: int = 0) -> str:
     max_stops = max_stops_for_duration(parsed)
-    max_options = max_options_per_day(parsed, parsed.day_count)
+    max_options = max_options_per_day(parsed, parsed.day_count, confirmed_count)
     lines = [
         f'- User duration: "{parsed.raw}" → {parsed.summary}.',
         f"- Output EXACTLY {parsed.day_count} day block(s) in the `days` array (day numbers 1..{parsed.day_count}).",
@@ -280,7 +280,7 @@ def _build_options_from_candidates(
         )
         seen_place_ids.add(candidate.place_id)
 
-    per_day_target = max_options_per_day(parsed, day_count)
+    per_day_target = max_options_per_day(parsed, day_count, len(confirmed))
     unused_candidates = [candidate for candidate in candidates if candidate.place_id not in seen_place_ids]
     candidate_index = 0
     for day in day_numbers:
@@ -302,6 +302,7 @@ def _enforce_day_structure(
     options: ItineraryOptionsModel,
     day_count: int,
     parsed: ParsedDuration,
+    confirmed_count: int = 0,
 ) -> ItineraryOptionsModel:
     """Clamp LLM output to the parsed calendar day count (fixes spurious multi-day plans)."""
     if day_count <= 1 or parsed.is_single_outing:
@@ -313,7 +314,7 @@ def _enforce_day_structure(
                     continue
                 merged.append(option)
                 seen.add(option.place_id)
-        cap = max_options_per_day(parsed, 1)
+        cap = max_options_per_day(parsed, 1, confirmed_count)
         return ItineraryOptionsModel(
             destination=options.destination,
             days=[DayOptionsModel(day=1, options=merged[:cap])],
@@ -329,7 +330,7 @@ def _enforce_day_structure(
             by_day[target].append(option)
             seen.add(option.place_id)
 
-    cap = max_options_per_day(parsed, day_count)
+    cap = max_options_per_day(parsed, day_count, confirmed_count)
     days = [
         DayOptionsModel(day=day, options=by_day[day][:cap])
         for day in range(1, day_count + 1)
@@ -348,7 +349,7 @@ def _normalize_options(
     *,
     parsed: ParsedDuration,
 ) -> ItineraryOptionsModel:
-    raw_options = _enforce_day_structure(raw_options, day_count, parsed)
+    raw_options = _enforce_day_structure(raw_options, day_count, parsed, confirmed_count=len(confirmed))
     candidate_map = {candidate.place_id: candidate for candidate in candidates}
     normalized_by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in range(1, day_count + 1)}
     seen_place_ids: set[str] = set()
@@ -406,10 +407,19 @@ def _normalize_options(
         destination, persona_type, day_count, candidates, confirmed, parsed=parsed
     )
     fallback_by_day = {day.day: list(day.options) for day in fallback_options.days}
+    per_day_target = max_options_per_day(parsed, day_count, len(confirmed))
     for day in range(1, day_count + 1):
-        if normalized_by_day.get(day):
-            continue
-        normalized_by_day[day] = fallback_by_day.get(day, [])
+        existing = normalized_by_day.setdefault(day, [])
+        if len(existing) < per_day_target:
+            for fallback_opt in fallback_by_day.get(day, []):
+                if fallback_opt.place_id not in seen_place_ids:
+                    name_key = fallback_opt.name.strip().lower()
+                    if name_key not in seen_names:
+                        existing.append(fallback_opt)
+                        seen_place_ids.add(fallback_opt.place_id)
+                        seen_names.add(name_key)
+                if len(existing) >= per_day_target:
+                    break
 
     days = [
         DayOptionsModel(day=day, options=normalized_by_day.get(day, []))
@@ -460,12 +470,11 @@ def _build_final_itinerary(
         day_number = 1 if parsed.is_single_outing else min(max(1, place.get("day", 1)), parsed.day_count)
         grouped[day_number].append(place)
 
-    max_stops = max_stops_for_duration(parsed)
     days: list[ItineraryDay] = []
     for day_number in sorted(grouped):
         if day_number > parsed.day_count:
             continue
-        ordered_places = sorted(grouped[day_number], key=lambda item: item.get("order", 999))[:max_stops]
+        ordered_places = sorted(grouped[day_number], key=lambda item: item.get("order", 999))
         stops = [
             StopModel(
                 place_id=place["place_id"],
@@ -643,7 +652,7 @@ class ItineraryAgent(BaseAgent):
             pace=persona_dict.get("pace", "Unknown"),
             budget=persona_dict.get("budget", "Unknown"),
             notes=persona_dict.get("notes", ""),
-            duration_rules=_build_duration_rules(parsed),
+            duration_rules=_build_duration_rules(parsed, confirmed_count=len(confirmed)),
             confirmed_section=_build_confirmed_section(confirmed),
             refinement_section=_build_refinement_section(refinement_text),
             candidate_section=_build_candidate_section(search_candidates),
