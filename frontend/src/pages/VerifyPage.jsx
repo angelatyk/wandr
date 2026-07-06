@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FREE_TEXT_MAX } from '../constants/inputLimits'
 import { usePlanStream } from '../hooks/usePlanStream'
 import { parseDurationString, parseSuggestedDuration } from '../utils/duration'
+import SelectedPlacesSummary from '../components/SelectedPlacesSummary'
 
 /**
  * VerifyPage — review and curate itinerary options before finalising.
@@ -207,6 +208,17 @@ export default function VerifyPage() {
   const personaType = persona?.type ?? ''
   const duration = persona?.duration ?? ''
 
+  // Build a map of place_id to name for the summary list
+  const placeNames = useMemo(() => {
+    const map = new Map()
+    for (const day of itineraryOptions?.days ?? []) {
+      for (const place of day.options ?? []) {
+        map.set(place.place_id, place.name)
+      }
+    }
+    return map
+  }, [itineraryOptions])
+
   return (
     <div className="min-h-screen bg-surface text-on-surface antialiased pb-56">
 
@@ -324,8 +336,9 @@ export default function VerifyPage() {
 
                         {/* Card */}
                         <div
+                          id={`place-card-${place.place_id}`}
                           className={[
-                            'rounded-2xl overflow-hidden border transition-all duration-300',
+                            'place-card-inner rounded-2xl overflow-hidden border transition-all duration-300',
                             isConfirmed
                               ? 'border-outline-variant/30 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-raised)] hover:-translate-y-1 bg-surface-white'
                               : 'border-outline-variant/20 bg-surface-white',
@@ -444,6 +457,15 @@ export default function VerifyPage() {
           </div>
         )}
       </main>
+
+      {/* ── Fixed Selected Places Summary (Desktop only) ── */}
+      {!isLoading && (
+        <SelectedPlacesSummary 
+          confirmed={confirmed} 
+          placeNames={placeNames} 
+          onRemoveAll={() => setConfirmed(new Set())} 
+        />
+      )}
 
       {/* ── Floating bottom bar: refine textarea + finalize CTA ── */}
       <div className="fixed bottom-0 left-0 w-full p-4 md:p-8 bg-gradient-to-t from-surface via-surface/90 to-transparent z-50 flex flex-col items-center pointer-events-none">
