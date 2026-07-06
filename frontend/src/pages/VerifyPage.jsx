@@ -159,13 +159,33 @@ export default function VerifyPage() {
       }
     }
     
-    const totalWithOverhead = totalSuggested * 1.2
     const maxDuration = parseDurationString(duration)
+    const numStops = placesList.length
     
-    if (maxDuration > 0 && totalWithOverhead > maxDuration + 0.5 && maxDuration < 24) {
+    // Estimate transit/travel time (30 minutes per stop)
+    const travelTime = numStops * 0.5
+    
+    const isMultiDay = maxDuration >= 24 || duration.toLowerCase().includes('day') || duration.toLowerCase().includes('week')
+    
+    let eatingTime = 0
+    let restingTime = 0
+    
+    if (isMultiDay) {
+      const numDays = Math.max(1, Math.ceil(maxDuration / 24))
+      eatingTime = numDays * 2.0 // 2 hours of eating per day
+      restingTime = (numDays - 1) * 8.0 // 8 hours of sleep per night
+    } else {
+      // Short trip: add 1 hour for eating if duration is longer than 4 hours; no sleep time
+      eatingTime = maxDuration > 4 ? 1.0 : 0.0
+      restingTime = 0.0
+    }
+    
+    const totalRequired = totalSuggested + travelTime + eatingTime + restingTime
+    
+    if (maxDuration > 0 && totalRequired > maxDuration) {
       setExceededData({
         places: placesList,
-        calculated: Math.round(totalWithOverhead * 10) / 10
+        calculated: Math.round(totalRequired * 10) / 10
       })
       setShowConfirmModal(true)
       return

@@ -41,27 +41,33 @@ Still remaining:
 
 ### How state flows
 
-The pipeline has two phases: a **sequential setup phase** (Profiler → Itinerary) that establishes the trip plan, followed by a **parallel execution phase** where the Stop Processor (concurrency for stop research/narration) and the Logistics agent (calculating directions/coordinates) run in parallel. This allows the frontend to immediately retrieve coordinates and render the finalized route on the map in under 2 seconds, while the audio narrations stream in gradually.
+The pipeline has two phases: a **sequential setup phase** (Profiler → Itinerary) that establishes the trip plan, followed by a **parallel execution phase** where the Stop Processor (concurrency for stop research/narration) and the Logistics agent (calculating directions/coordinates) run in parallel.
+
+1. **Profiler Agent** gathers trip requirements. If any mandatory fields are missing, clarifying questions are asked on `RefinePage.jsx`.
+2. **Itinerary Agent** researches options (short and long stops) and suggestions are listed on `VerifyPage.jsx` for selection. Refinements reload new options on the same page.
+3. **Parallel Phase**: Finalizing the itinerary on `VerifyPage.jsx` runs the Logistics Agent and Stop Processor concurrently. Once the Logistics Agent completes (route ready), `ItineraryPage.jsx` loads immediately to display the route map. Narration updates stream in incrementally when ready.
 
 ```
 User prompt
     ↓
-Profiler ──────────────────────────── writes: session.state["persona"] (requires destination, duration, transit)
+Profiler ──────────────────────────── writes: session.state["persona"] (requires destination, duration, travel preference)
+    │                                  └─ If missing: Asks clarifying questions on RefinePage.jsx
     ↓
 Itinerary ─────────────────────────── reads: persona
-                                       writes: session.state["itinerary"] (deduplicated & mixed stops)
+                                       writes: session.state["suggestions"] (listed on VerifyPage.jsx)
+                                       └─ Refinement textbox on VerifyPage.jsx gets Itinerary to regenerate
     ↓
-Parallel Execution
-    ├── Logistics ─────────────────── reads: itinerary
+VerifyPage finalize 
+    ↓
+Parallel Execution (Run Concurrently)
+    ├── Logistics Agent ───────────── reads: finalized itinerary selection
     │                                  writes: session.state["route"] (triggers logistics_done)
+    │                                  └─ Immediately loads ItineraryPage.jsx to draw map once done
     │
-    └── Stop Processor (parallel fan-out)
-         ├── Stop A: StopResearch → Narrator ─┐
+    └── Stop Processor fan-out ────── writes: session.state["audio_scripts"] (triggers stop_done)
+         ├── Stop A: StopResearch → Narrator ─┐  (Narration/audio streams in whenever ready)
          ├── Stop B: StopResearch → Narrator ─┤── asyncio.gather()
          └── Stop N: StopResearch → Narrator ─┘
-                                               writes: session.state["audio_scripts"] (triggers stop_done)
-    ↓
-Orchestrator assembles final response (itinerary + audio + map)
 ```
 
 ### Request-to-render flow
@@ -71,39 +77,25 @@ This is the current end-to-end logic flow for the app entrypoint and the live da
 ```
 HomePage form
     ↓
-POST /api/plan
-    - vibe
-    - current_location
-    - destination
-    - duration
-    - persona_type
-    - transit_preference
+POST /api/plan (initial request details)
     ↓
-Profiler
-    - Validates mandatory inputs (asks clarifying questions if missing)
-    - Defaults missing optional fields (persona type defaults to tourist)
+Profiler (profiler.py)
+    - Gathers trip details. Minimum required: destination, duration, travel preference.
+    - Captures optional fields: current location, persona, other notes.
+    - If mandatory fields missing: returns clarifying questions to display on RefinePage.jsx
     ↓
-Itinerary
-    - Calls places_search(...)
-    - Deduplicates results by name & ID, ensures mix of short/long duration stops
-    - Writes itinerary_options or itinerary
+Itinerary (itinerary.py)
+    - Calls places_search(...) to research short/long stops.
+    - Prepares list of suggestions/options where user can go (totaling duration).
+    - Lists suggestions on VerifyPage.jsx.
     ↓
-VerifyPage refine/finalize
-    - If finalize clicked, checks if selections exceed duration specified (overhead included)
+VerifyPage.jsx (Select/Deselect and Refinement)
+    - If user enters text in refine textbox: Itinerary Agent regenerates and reloads options.
+    - User selects/unselects options.
+    - Clicking "Finalize Itinerary" totals up selected stops including travel, eating, and resting times (resting/eating added only for multi-day trips or within reason).
+    - If total exceeds specified duration: shows a confirmation modal. If accepted, triggers the final step.
     ↓
 Parallel Execution (Logistics & Stop Processor)
-    ├── Logistics
-    │     ├── Calls get_place_details(...) & get_directions(...)
-    │     └── Writes route & emits logistics_done (frontend navigates to ItineraryPage to show map)
-    │
-    └── Stop Processor fan-out (runs concurrently)
-          ├── Stop Research ── calls get_place_details(...)
-          └── Narrator ─────── calls generate_audio(...) & emits stop_done incrementally
-    ↓
-session.state
-    - persona
-    - itinerary_options / itinerary
-    - audio_scripts
     - route
     - tool_usage
     ↓
@@ -134,12 +126,13 @@ The ADK root. Bootstraps the sequential pipeline, hands off to the Stop Processo
 **Tools:** none
 **State:** `output_key="persona"` | `output_schema=PersonaModel`
 
-Captures and enriches the user's travel persona. Asks follow-up questions if destination, duration, or transit preference are missing. Produces a structured Pydantic object written to `session.state["persona"]`.
+Gathers all the information needed to plan the trip/exploration. If anything is missing, it generates clarifying questions to be asked on the frontend.
 
-- **Mandatory Fields**: Destination, duration, and transit preference are mandatory. If any are missing, the agent will prompt the user with clarifying questions.
-- **Optional Fields & Defaults**: Preferences like persona interests are optional. If not specified, the persona defaults to a general "tourist" persona rather than stalling.
+- **Mandatory Fields**: Destination, duration, and travel preference are mandatory. If any of these are missing, the agent asks clarifying questions to be prompted on `RefinePage.jsx`.
+- **Optional Fields**: Current location, persona (travel interests/style), and other notes are optional. The agent identifies and enriches them if provided.
 - Classifies persona: foodie / artist / historian / adventurer / local-life
 - Infers pace, budget level, accessibility needs from conversation
+- Clarifying questions from this agent must be asked on `RefinePage.jsx`.
 - Persona object stored locally in browser (never sent to backend)
 - On repeat visits, reads saved persona from localStorage and skips elicitation
 
@@ -151,11 +144,13 @@ Captures and enriches the user's travel persona. Asks follow-up questions if des
 **Tools:** `places_search`, `get_place_details`
 **State:** reads `session.state["persona"]` | `output_key="itinerary"` | `output_schema=ItineraryModel`
 
-Takes the persona and trip parameters, calls Google Places via its registered tools to gather candidates, then builds a structured day-by-day stop list. Does not do deep research on each stop — that is delegated to the parallel Stop Research agents.
+Takes the persona and trip parameters, researches options, and suggests a list of recommendations for the trip.
 
 - Calls `places_search(destination, persona_type)` for initial candidates
 - **Deduplication**: Filters candidates to avoid duplicate suggestions of the same place (based on name similarity and Google Place ID matches).
-- **Duration / Suggestions Mix**: Recommends a mix of stop durations (including "short stops" ranging from 15-45 minutes and longer spots) rather than only places that use up the user's entire duration, applying this universally across all trip lengths to give the user multiple options.
+- **Duration & Options Mix**: Researches a bunch of options including both short stops and long stops. The user does not need to spend their entire duration in one stop; they can choose a bunch of short stops that total to the duration. The goal is to provide options of where they want to go.
+- **Where Suggestions Go**: These suggestions must be listed on `VerifyPage.jsx`.
+- **Refinement Feedback**: Responds to user feedback typed in the refine textbox on `VerifyPage.jsx`. When refinement is submitted, the agent makes better suggestions and reloads them on `VerifyPage.jsx`.
 - Balances must-see vs hidden gem ratio per persona type
 - Produces a flat ordered stop list per day, ready for fan-out
 - Handles multi-day trips with clean day boundaries
@@ -223,8 +218,10 @@ Runs in parallel (one per stop), immediately after Stop Research for the same st
 **Tools:** `get_directions`
 **State:** reads `session.state["itinerary"]`, `session.state["audio_scripts"]` | `output_key="route"`
 
-Runs concurrently with Stop Processor execution. Optimizes the route order across stops, calculates travel times, and generates the map data. Because it finishes quickly, its completion event (`logistics_done`) triggers the frontend to load the finalized route map early.
+Runs in parallel with the Stop Processor (audio narration generation) when the user finalizes the itinerary on `VerifyPage.jsx`.
 
+- **Parallel Run**: Triggers in parallel with the audio narration pipeline when "Finalize Itinerary" is clicked on `VerifyPage.jsx`.
+- **Page Load Trigger**: When complete, the full route is ready. This immediately loads `ItineraryPage.jsx` to display and draw the map. The frontend must **not wait** for narration/audio generation to complete before loading the page.
 - Route optimization via nearest-neighbor across stops per day
 - Calculates travel time between stops using Google Maps Directions API
 - Respects opening hours to flag scheduling conflicts
@@ -429,6 +426,30 @@ export function usePlanStream(planId: string) {
 
 ---
 
+## Frontend pages
+
+Each page on the frontend has a clear responsibility and coordinates with specific backend agents:
+
+### 1. HomePage (`HomePage.jsx`)
+- The landing page where the user enters the initial query (vibe, destination, duration, current location, travel preferences).
+
+### 2. RefinePage (`RefinePage.jsx`)
+- Renders clarifying questions from the Profiler Agent (`ai/agents/profiler.py`) when mandatory details (destination, duration, travel preference) are missing.
+
+### 3. VerifyPage (`VerifyPage.jsx`)
+- Lists suggested stops researched by the Itinerary Agent (`ai/agents/itinerary.py`). Shows a mix of short stops and long stops.
+- Contains a **refinement textbox** where users can enter prompts to reload better suggestions from the Itinerary Agent.
+- Allows users to select/deselect specific options.
+- Clicking **"Finalize Itinerary"** totals up the durations of all selected options plus estimated overheads (travel time, resting/sleeping time, and eating time within reason; resting/eating are only added for multi-day trips).
+- If the total exceeds the user's specified duration, it shows a confirmation modal listing the selected spots and calculated time. If confirmed, it triggers parallel execution of the Logistics Agent (`ai/agents/logistics.py`) and the Stop Processor (audio narration).
+
+### 4. ItineraryPage (`ItineraryPage.jsx`)
+- Loads as soon as the Logistics Agent (`ai/agents/logistics.py`) finishes generating the full route and coordinates.
+- **Does not wait** for narration to complete generating before loading. It immediately renders and draws the map with route coordinates.
+- Narration (audio/script updates) streams in incrementally in the background whenever it is ready.
+
+---
+
 ## Tech stack
 
 | Layer       | Choices                                                                                                    |
@@ -605,10 +626,10 @@ wandr/
 │       │   ├── StopCard.tsx
 │       │   └── AudioPlayer.tsx
 │       └── pages/
-│           ├── HomePage.tsx
-│           ├── RefinePage.tsx
-│           ├── VerifyPage.tsx
-│           └── ItineraryPage.tsx
+│           ├── HomePage.jsx
+│           ├── RefinePage.jsx
+│           ├── VerifyPage.jsx
+│           └── ItineraryPage.jsx
 │
 ├── outputs/                        # gitignored — generated audio files
 │   └── .gitkeep
