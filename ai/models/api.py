@@ -1,14 +1,21 @@
-from pydantic import BaseModel
-from typing import Optional
+from typing import Annotated, Optional
+
+from pydantic import BaseModel, Field
+
+# Free-text fields are capped so a single request can't push an unbounded prompt
+# into Gemini (token-cost abuse) or carry an oversized prompt-injection payload.
+ShortText = Annotated[str, Field(max_length=200)]
+FreeText = Annotated[str, Field(max_length=2000)]
+PlaceId = Annotated[str, Field(max_length=300)]
 
 
 class TripRequest(BaseModel):
-    vibe: Optional[str] = None
-    destination: Optional[str] = None
-    current_location: Optional[str] = None
-    duration: Optional[str] = None
-    persona_type: Optional[str] = None
-    transit_preference: Optional[str] = None
+    vibe: Optional[FreeText] = None
+    destination: Optional[ShortText] = None
+    current_location: Optional[ShortText] = None
+    duration: Optional[ShortText] = None
+    persona_type: Optional[ShortText] = None
+    transit_preference: Optional[ShortText] = None
 
 
 class SelectRequest(TripRequest):
@@ -19,6 +26,7 @@ class SelectRequest(TripRequest):
     refinement_text     — optional free-text refinement request
     action              — "refine" re-generates options; "finalize" locks in the itinerary
     """
-    confirmed_place_ids: list[str] = []
-    refinement_text: Optional[str] = None
+
+    confirmed_place_ids: list[PlaceId] = Field(default_factory=list, max_length=200)
+    refinement_text: Optional[FreeText] = None
     action: str = "refine"  # "refine" | "finalize"

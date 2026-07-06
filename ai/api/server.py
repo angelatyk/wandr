@@ -23,6 +23,7 @@ from ai.api.auth import (
     set_session_cookie,
     verify_google_id_token,
 )
+from ai.api.rate_limit import client_ip, enforce, pipeline_limiter
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.auth import AuthUser
 from ai.models.events import PipelineEvent
@@ -61,6 +62,51 @@ app.add_middleware(
 
 pipeline_queues: Dict[str, asyncio.Queue] = {}
 session_service = InMemorySessionService()
+
+
+def _plan_rate_limited_user(user: AuthUser = Depends(get_current_user)) -> AuthUser:
+    """Per-user budget for the expensive planning endpoints (Gemini/Places/TTS)."""
+    enforce(
+        f"plan:{user.id}",
+        settings.plan_rate_limit_max,
+        settings.plan_rate_limit_window_seconds,
+    )
+    return user
+
+
+def _autocomplete_rate_limited_user(user: AuthUser = Depends(get_current_user)) -> AuthUser:
+    """Autocomplete calls the billed Places API on every keystroke — cap per user."""
+    enforce(
+        f"autocomplete:{user.id}",
+        settings.autocomplete_rate_limit_max,
+        settings.autocomplete_rate_limit_window_seconds,
+    )
+    return user
+
+
+def _auth_rate_limit(request: Request) -> None:
+    """Per-IP throttle on unauthenticated auth endpoints to slow brute force."""
+    enforce(
+        f"auth:{client_ip(request)}",
+        settings.auth_rate_limit_max,
+        settings.auth_rate_limit_window_seconds,
+    )
+
+
+def _acquire_pipeline_slot(user_id: str) -> None:
+    """Reserve a concurrency slot or reject, so loops can't spawn unbounded tasks."""
+    if not pipeline_limiter.try_acquire(
+        user_id,
+        settings.max_concurrent_pipelines_per_user,
+        settings.max_concurrent_pipelines_global,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "A trip is already being planned on your account. "
+                "Please wait for it to finish before starting another."
+            ),
+        )
 
 
 async def _require_owned_plan(plan_id: str, user: AuthUser):
@@ -429,10 +475,18 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue,
             data={"message": user_message},
             progress=100
         ).model_dump())
+    finally:
+        # Always free the concurrency slot the launching endpoint reserved,
+        # whether the run completed, paused for input, or errored out.
+        pipeline_limiter.release(owner_id)
 
 
 @app.post("/api/auth/google")
-async def auth_google(response: FastAPIResponse, credential: str = Body(..., embed=True)):
+async def auth_google(
+    response: FastAPIResponse,
+    credential: str = Body(..., embed=True),
+    _: None = Depends(_auth_rate_limit),
+):
     """Exchange a Google Identity Services ID token for a session cookie."""
     user = verify_google_id_token(credential)
     set_session_cookie(response, user)
@@ -440,7 +494,11 @@ async def auth_google(response: FastAPIResponse, credential: str = Body(..., emb
 
 
 @app.post("/api/auth/dev-login")
-async def auth_dev_login(response: FastAPIResponse, email: str | None = Body(None, embed=True)):
+async def auth_dev_login(
+    response: FastAPIResponse,
+    email: str | None = Body(None, embed=True),
+    _: None = Depends(_auth_rate_limit),
+):
     """Local-only login shortcut. Disabled in production (see dev_login_allowed)."""
     if not dev_login_allowed():
         raise HTTPException(status_code=403, detail="Dev login is disabled.")
@@ -470,21 +528,28 @@ async def auth_config():
 
 
 @app.post("/api/plan")
-async def create_plan(request: TripRequest, user: AuthUser = Depends(get_current_user)):
-    plan_id = str(uuid4())
-    queue = asyncio.Queue()
-    pipeline_queues[plan_id] = queue
-    save_plan_snapshot(
-        plan_id,
-        {"trip_request": request.model_dump(exclude_none=True)},
-        owner_id=user.id,
-    )
-    asyncio.create_task(run_pipeline(plan_id, request, queue, user.id))
+async def create_plan(request: TripRequest, user: AuthUser = Depends(_plan_rate_limited_user)):
+    _acquire_pipeline_slot(user.id)
+    try:
+        plan_id = str(uuid4())
+        queue = asyncio.Queue()
+        pipeline_queues[plan_id] = queue
+        save_plan_snapshot(
+            plan_id,
+            {"trip_request": request.model_dump(exclude_none=True)},
+            owner_id=user.id,
+        )
+        asyncio.create_task(run_pipeline(plan_id, request, queue, user.id))
+    except Exception:
+        # We reserved a slot but never launched the pipeline that would release
+        # it, so hand the slot back before surfacing the error.
+        pipeline_limiter.release(user.id)
+        raise
     return {"plan_id": plan_id}
 
 
 @app.post("/api/plan/{plan_id}/reply")
-async def reply_plan(plan_id: str, request: TripRequest, user: AuthUser = Depends(get_current_user)):
+async def reply_plan(plan_id: str, request: TripRequest, user: AuthUser = Depends(_plan_rate_limited_user)):
     """Resume the pipeline after a profiler clarification answer."""
     await _require_owned_plan(plan_id, user)
     if plan_id not in pipeline_queues:
@@ -514,12 +579,17 @@ async def reply_plan(plan_id: str, request: TripRequest, user: AuthUser = Depend
                 list(stale_state.keys()), plan_id,
             )
 
-    asyncio.create_task(run_pipeline(plan_id, request, queue, user.id))
+    _acquire_pipeline_slot(user.id)
+    try:
+        asyncio.create_task(run_pipeline(plan_id, request, queue, user.id))
+    except Exception:
+        pipeline_limiter.release(user.id)
+        raise
     return {"plan_id": plan_id}
 
 
 @app.post("/api/plan/{plan_id}/select")
-async def select_places(plan_id: str, body: SelectRequest, user: AuthUser = Depends(get_current_user)):
+async def select_places(plan_id: str, body: SelectRequest, user: AuthUser = Depends(_plan_rate_limited_user)):
     """
     Called by VerifyPage when the user:
       1. Submits the refine textarea — reruns the itinerary agent with their
@@ -641,14 +711,19 @@ async def select_places(plan_id: str, body: SelectRequest, user: AuthUser = Depe
             "Refining itinerary for plan %s with text: %r", plan_id, body.refinement_text
         )
 
-    asyncio.create_task(run_pipeline(plan_id, run_body, queue, user.id))
+    _acquire_pipeline_slot(user.id)
+    try:
+        asyncio.create_task(run_pipeline(plan_id, run_body, queue, user.id))
+    except Exception:
+        pipeline_limiter.release(user.id)
+        raise
     return {"plan_id": plan_id, "action": body.action}
 
 
 @app.get("/api/places/autocomplete")
 async def places_autocomplete(
     query: str = Query("", min_length=0, max_length=200),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(_autocomplete_rate_limited_user),
 ):
     suggestions = await autocomplete_places(query)
     return {"suggestions": suggestions}

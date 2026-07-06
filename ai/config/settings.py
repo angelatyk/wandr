@@ -39,6 +39,27 @@ class Settings(BaseSettings):
     # endpoint is refused whenever the cookie is marked secure (i.e. HTTPS/prod).
     dev_auth_enabled: bool = True
 
+    # -------------------------------
+    # Abuse / cost controls
+    # -------------------------------
+    # Master switch — disable only for load tests, never in production.
+    rate_limit_enabled: bool = True
+    # Expensive planning endpoints (create/reply/select) launch Gemini + Places +
+    # TTS work, so they get a tight per-user budget over a rolling window.
+    plan_rate_limit_max: int = 10
+    plan_rate_limit_window_seconds: int = 60
+    # Places autocomplete is billed per keystroke — allow more, but still cap it.
+    autocomplete_rate_limit_max: int = 60
+    autocomplete_rate_limit_window_seconds: int = 60
+    # Unauthenticated auth endpoints are keyed by client IP to slow brute force.
+    auth_rate_limit_max: int = 20
+    auth_rate_limit_window_seconds: int = 60
+    # A single user may only have this many pipelines running at once; anything
+    # more is rejected so a loop can't spawn unbounded background tasks.
+    max_concurrent_pipelines_per_user: int = 1
+    # Hard ceiling across all users, protecting total Google API spend/CPU.
+    max_concurrent_pipelines_global: int = 8
+
     class Config:
         env_file = ".env"
         extra = "ignore"
