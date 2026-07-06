@@ -15,6 +15,7 @@ PlanStatus = Literal[
 class TripSummary(BaseModel):
     plan_id: str
     status: PlanStatus
+    owner_id: str = ""
     destination: str = "Unknown destination"
     duration: str = ""
     persona_type: str = ""
@@ -28,5 +29,6 @@ class TripSummary(BaseModel):
 class SavedPlanSnapshot(BaseModel):
     plan_id: str
     status: PlanStatus
+    owner_id: str = ""
     summary: TripSummary
     state: dict[str, Any] = Field(default_factory=dict)

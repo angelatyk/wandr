@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import { useAuth } from '../hooks/useAuth'
 
 const NAV_LINKS = [
   { label: 'Explore', to: '/' },
@@ -18,6 +19,7 @@ const MOBILE_NAV = [
  */
 export default function TopNav() {
   const { pathname } = useLocation()
+  const { user, logout } = useAuth()
 
   return (
     <>
@@ -54,6 +56,15 @@ export default function TopNav() {
 
           {/* Icon actions */}
           <div className="flex items-center gap-2 text-primary">
+            {user?.email && (
+              <span
+                className="hidden md:inline text-xs text-on-surface-muted max-w-[180px] truncate"
+                style={{ fontFamily: 'var(--font-body)' }}
+                title={user.email}
+              >
+                {user.email}
+              </span>
+            )}
             <button
               aria-label="Notifications"
               className="p-2 hover:text-secondary transition-colors duration-300 rounded-lg"
@@ -61,10 +72,12 @@ export default function TopNav() {
               <span className="material-symbols-outlined text-[24px]">notifications</span>
             </button>
             <button
-              aria-label="Account"
+              onClick={logout}
+              aria-label="Sign out"
+              title="Sign out"
               className="p-2 hover:text-secondary transition-colors duration-300 rounded-lg"
             >
-              <span className="material-symbols-outlined text-[24px]">account_circle</span>
+              <span className="material-symbols-outlined text-[24px]">logout</span>
             </button>
           </div>
         </div>

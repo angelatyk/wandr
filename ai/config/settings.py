@@ -23,6 +23,22 @@ class Settings(BaseSettings):
     # Comma-separated origins for CORS — tighten before production deploy
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # -------------------------------
+    # Auth / sessions
+    # -------------------------------
+    # Google OAuth client ID used to verify "Sign in with Google" ID tokens.
+    google_oauth_client_id: str | None = None
+    # HMAC key used to sign session cookies. MUST be set to a long random value
+    # in production — a weak/empty key means forgeable sessions.
+    session_secret_key: str | None = None
+    session_cookie_name: str = "wandr_session"
+    session_ttl_seconds: int = 60 * 60 * 24 * 7  # 7 days
+    # Set true behind HTTPS in production so the cookie is not sent over http.
+    session_cookie_secure: bool = False
+    # Local-only convenience login. Fails closed in production: the dev-login
+    # endpoint is refused whenever the cookie is marked secure (i.e. HTTPS/prod).
+    dev_auth_enabled: bool = True
+
     class Config:
         env_file = ".env"
         extra = "ignore"

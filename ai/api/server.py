@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import uuid4
 from typing import Dict, Set
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response as FastAPIResponse
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.adk.sessions import InMemorySessionService
@@ -15,7 +15,16 @@ from google.genai.types import Content, Part
 
 from ai.config.settings import settings
 from ai.agents.orchestrator import orchestrator_agent
+from ai.api.auth import (
+    clear_session_cookie,
+    dev_login_allowed,
+    dev_login_user,
+    get_current_user,
+    set_session_cookie,
+    verify_google_id_token,
+)
 from ai.models.api import TripRequest, SelectRequest
+from ai.models.auth import AuthUser
 from ai.models.events import PipelineEvent
 from ai.models.tool_usage import load_tool_usage
 from ai.tools.audio_store import load_plan_audio
@@ -24,9 +33,11 @@ from ai.tools.plan_store import (
     async_save_plan_snapshot,
     derive_plan_status,
     enrich_itinerary_dict,
+    is_valid_plan_id,
     list_plan_summaries,
     load_plan_snapshot,
     save_plan_snapshot,
+    user_owns_plan,
 )
 from ai.tools.tts import generate_audio
 from ai.agents.narrator import persona_voice_style
@@ -50,6 +61,17 @@ app.add_middleware(
 
 pipeline_queues: Dict[str, asyncio.Queue] = {}
 session_service = InMemorySessionService()
+
+
+async def _require_owned_plan(plan_id: str, user: AuthUser):
+    """Load a plan and confirm the caller owns it, else 404 (avoids leaking existence)."""
+    if not is_valid_plan_id(plan_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+    snapshot = load_plan_snapshot(plan_id)
+    if not user_owns_plan(snapshot, user.id):
+        # Return 404 rather than 403 so we don't confirm that a plan exists.
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return snapshot
 
 
 def _state_with_event_delta(state: dict, event) -> dict:
@@ -118,17 +140,17 @@ def _find_script_in_state(state: dict, place_id: str) -> dict | None:
     return None
 
 
-async def _snapshot_session_state(plan_id: str) -> None:
+async def _snapshot_session_state(plan_id: str, owner_id: str) -> None:
     """Persist the latest in-memory session to disk for My Trips replay."""
-    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
     if session is None:
         return
-    await async_save_plan_snapshot(plan_id, session.state)
+    await async_save_plan_snapshot(plan_id, session.state, owner_id=owner_id)
 
 
-async def _ensure_plan_session(plan_id: str) -> dict:
+async def _ensure_plan_session(plan_id: str, owner_id: str) -> dict:
     """Load a saved plan into the in-memory session when the server restarted."""
-    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
     if session is not None:
         return session.state
 
@@ -138,10 +160,10 @@ async def _ensure_plan_session(plan_id: str) -> dict:
 
     await session_service.create_session(
         app_name=APP_NAME,
-        user_id="user",
+        user_id=owner_id,
         session_id=plan_id,
     )
-    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
     if session is None:
         return snapshot.state
 
@@ -154,7 +176,7 @@ async def _ensure_plan_session(plan_id: str) -> dict:
             actions=EventActions(state_delta=snapshot.state),
         ),
     )
-    refreshed = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    refreshed = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
     return {} if refreshed is None else refreshed.state
 
 
@@ -179,9 +201,9 @@ def _rate_limit_error_message(error: Exception) -> str:
     return "Pipeline failed. Please try again or adjust your request."
 
 
-async def _clear_pipeline_error(plan_id: str) -> None:
+async def _clear_pipeline_error(plan_id: str, owner_id: str) -> None:
     """Remove a stale error marker before a new pipeline run."""
-    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
     if session is None or session.state.get("pipeline_error") is None:
         return
     from google.adk.events import Event, EventActions
@@ -195,9 +217,9 @@ async def _clear_pipeline_error(plan_id: str) -> None:
     )
 
 
-async def _persist_pipeline_error(plan_id: str, message: str) -> None:
+async def _persist_pipeline_error(plan_id: str, message: str, owner_id: str) -> None:
     """Persist user-facing errors so reconnecting SSE clients can replay them."""
-    session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
     if session is None:
         return
     from google.adk.events import Event, EventActions
@@ -211,14 +233,14 @@ async def _persist_pipeline_error(plan_id: str, message: str) -> None:
     )
 
 
-async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue):
+async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue, owner_id: str):
     """
     Execute the orchestrator pipeline for one turn and stream PipelineEvents
     into the queue.  Handles both the initial plan request and subsequent
     re-runs triggered by VerifyPage (refine / finalize).
     """
     try:
-        await _clear_pipeline_error(plan_id)
+        await _clear_pipeline_error(plan_id, owner_id)
 
         runner = Runner(
             agent=orchestrator_agent,
@@ -226,11 +248,11 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
             session_service=session_service,
         )
 
-        existing = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+        existing = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
         if existing is None:
             await session_service.create_session(
                 app_name=APP_NAME,
-                user_id="user",
+                user_id=owner_id,
                 session_id=plan_id,
             )
 
@@ -259,11 +281,11 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         emitted_phases: Set[str] = set()
 
         async for event in runner.run_async(
-            user_id="user",
+            user_id=owner_id,
             session_id=plan_id,
             new_message=user_message,
         ):
-            current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+            current_session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
             state = {} if current_session is None else current_session.state
             effective_state = _state_with_event_delta(state, event)
 
@@ -284,7 +306,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                             progress=progress
                         ).model_dump())
                         emitted_phases.add("profiler_done")
-                        await _snapshot_session_state(plan_id)
+                        await _snapshot_session_state(plan_id, owner_id)
                 else:
                     # Clarifying question — surface to user and pause
                     progress = 20
@@ -317,7 +339,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                         progress=progress
                     ).model_dump())
                     emitted_phases.add("itinerary_options")
-                    await _snapshot_session_state(plan_id)
+                    await _snapshot_session_state(plan_id, owner_id)
                     if itinerary_payload is None:
                         logger.info(
                             "Pipeline paused at itinerary options for plan %s. "
@@ -338,7 +360,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                         progress=progress
                     ).model_dump())
                     emitted_phases.add("itinerary_done")
-                    await _snapshot_session_state(plan_id)
+                    await _snapshot_session_state(plan_id, owner_id)
 
             elif author == "orchestrator":
                 audio_scripts_payload = effective_state.get("audio_scripts")
@@ -360,7 +382,7 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                                 progress=progress
                             ).model_dump())
                         emitted_phases.add("stop_done")
-                        await _snapshot_session_state(plan_id)
+                        await _snapshot_session_state(plan_id, owner_id)
 
             elif author == "logistics":
                 route_payload = effective_state.get("route")
@@ -374,10 +396,10 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                             progress=progress
                         ).model_dump())
                         emitted_phases.add("logistics_done")
-                        await _snapshot_session_state(plan_id)
+                        await _snapshot_session_state(plan_id, owner_id)
 
         # Pipeline run complete
-        current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+        current_session = await session_service.get_session(app_name=APP_NAME, user_id=owner_id, session_id=plan_id)
         final_state = {} if current_session is None else current_session.state
         if final_state.get("itinerary_options") is not None and final_state.get("itinerary") is None:
             logger.info(
@@ -385,11 +407,11 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
                 "not emitting complete event yet.",
                 plan_id,
             )
-            await _snapshot_session_state(plan_id)
+            await _snapshot_session_state(plan_id, owner_id)
             return
 
         progress = 100
-        await _snapshot_session_state(plan_id)
+        await _snapshot_session_state(plan_id, owner_id)
         await queue.put(PipelineEvent(
             type="complete",
             data=_public_complete_payload(plan_id, final_state),
@@ -400,8 +422,8 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         logger.error("Pipeline error for plan %s: %s", plan_id, e, exc_info=True)
         user_message = _rate_limit_error_message(e)
         logger.info("Pipeline user-facing error for plan %s: %s", plan_id, user_message)
-        await _persist_pipeline_error(plan_id, user_message)
-        await _snapshot_session_state(plan_id)
+        await _persist_pipeline_error(plan_id, user_message, owner_id)
+        await _snapshot_session_state(plan_id, owner_id)
         await queue.put(PipelineEvent(
             type="error",
             data={"message": user_message},
@@ -409,19 +431,62 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
         ).model_dump())
 
 
+@app.post("/api/auth/google")
+async def auth_google(response: FastAPIResponse, credential: str = Body(..., embed=True)):
+    """Exchange a Google Identity Services ID token for a session cookie."""
+    user = verify_google_id_token(credential)
+    set_session_cookie(response, user)
+    return {"user": user.model_dump()}
+
+
+@app.post("/api/auth/dev-login")
+async def auth_dev_login(response: FastAPIResponse, email: str | None = Body(None, embed=True)):
+    """Local-only login shortcut. Disabled in production (see dev_login_allowed)."""
+    if not dev_login_allowed():
+        raise HTTPException(status_code=403, detail="Dev login is disabled.")
+    user = dev_login_user(email)
+    set_session_cookie(response, user)
+    return {"user": user.model_dump()}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(response: FastAPIResponse):
+    clear_session_cookie(response)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def auth_me(user: AuthUser = Depends(get_current_user)):
+    return {"user": user.model_dump(), "dev_login_available": dev_login_allowed()}
+
+
+@app.get("/api/auth/config")
+async def auth_config():
+    """Public: tells the frontend which sign-in methods are available."""
+    return {
+        "google_client_id": settings.google_oauth_client_id or "",
+        "dev_login_available": dev_login_allowed(),
+    }
+
+
 @app.post("/api/plan")
-async def create_plan(request: TripRequest):
+async def create_plan(request: TripRequest, user: AuthUser = Depends(get_current_user)):
     plan_id = str(uuid4())
     queue = asyncio.Queue()
     pipeline_queues[plan_id] = queue
-    save_plan_snapshot(plan_id, {"trip_request": request.model_dump(exclude_none=True)})
-    asyncio.create_task(run_pipeline(plan_id, request, queue))
+    save_plan_snapshot(
+        plan_id,
+        {"trip_request": request.model_dump(exclude_none=True)},
+        owner_id=user.id,
+    )
+    asyncio.create_task(run_pipeline(plan_id, request, queue, user.id))
     return {"plan_id": plan_id}
 
 
 @app.post("/api/plan/{plan_id}/reply")
-async def reply_plan(plan_id: str, request: TripRequest):
+async def reply_plan(plan_id: str, request: TripRequest, user: AuthUser = Depends(get_current_user)):
     """Resume the pipeline after a profiler clarification answer."""
+    await _require_owned_plan(plan_id, user)
     if plan_id not in pipeline_queues:
         pipeline_queues[plan_id] = asyncio.Queue()
     queue = pipeline_queues[plan_id]
@@ -430,7 +495,7 @@ async def reply_plan(plan_id: str, request: TripRequest):
     # the user is replying with a new clarification or starting a fresh run.
     # Without this, ItineraryAgent sees a non-null 'itinerary' and returns early,
     # and LogisticsAgent sees a non-null 'route' and does the same.
-    current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    current_session = await session_service.get_session(app_name=APP_NAME, user_id=user.id, session_id=plan_id)
     if current_session is not None:
         stale_keys = ("itinerary", "route", "audio_scripts", "itinerary_action",
                       "itinerary_options", "itinerary_options_confirmed", "itinerary_refinement_text")
@@ -449,12 +514,12 @@ async def reply_plan(plan_id: str, request: TripRequest):
                 list(stale_state.keys()), plan_id,
             )
 
-    asyncio.create_task(run_pipeline(plan_id, request, queue))
+    asyncio.create_task(run_pipeline(plan_id, request, queue, user.id))
     return {"plan_id": plan_id}
 
 
 @app.post("/api/plan/{plan_id}/select")
-async def select_places(plan_id: str, body: SelectRequest):
+async def select_places(plan_id: str, body: SelectRequest, user: AuthUser = Depends(get_current_user)):
     """
     Called by VerifyPage when the user:
       1. Submits the refine textarea — reruns the itinerary agent with their
@@ -470,6 +535,7 @@ async def select_places(plan_id: str, body: SelectRequest):
       final mode and writes to the "itinerary" key
     - Runs the pipeline
     """
+    await _require_owned_plan(plan_id, user)
     logger.info(
         "select_places called. plan_id=%s action=%s confirmed=%s refinement=%r",
         plan_id, body.action, body.confirmed_place_ids, body.refinement_text,
@@ -484,13 +550,13 @@ async def select_places(plan_id: str, body: SelectRequest):
     # Pull the current session so we can update state before re-running.
     # If the in-memory session is gone (e.g. server restarted), restore it
     # from the disk snapshot so we can read itinerary_options and proceed.
-    current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+    current_session = await session_service.get_session(app_name=APP_NAME, user_id=user.id, session_id=plan_id)
     if current_session is None:
         logger.warning(
             "select_places: in-memory session %s not found — attempting snapshot restore.", plan_id
         )
-        await _ensure_plan_session(plan_id)
-        current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+        await _ensure_plan_session(plan_id, user.id)
+        current_session = await session_service.get_session(app_name=APP_NAME, user_id=user.id, session_id=plan_id)
     if current_session is None:
         logger.error("select_places: session %s could not be restored.", plan_id)
         raise HTTPException(status_code=404, detail="Plan session not found. Please start over.")
@@ -561,7 +627,7 @@ async def select_places(plan_id: str, body: SelectRequest):
         session=current_session,
         event=update_event
     )
-    await _snapshot_session_state(plan_id)
+    await _snapshot_session_state(plan_id, user.id)
 
     if body.action == "finalize":
         # Inject a synthetic user message that triggers the agent's final mode.
@@ -575,12 +641,15 @@ async def select_places(plan_id: str, body: SelectRequest):
             "Refining itinerary for plan %s with text: %r", plan_id, body.refinement_text
         )
 
-    asyncio.create_task(run_pipeline(plan_id, run_body, queue))
+    asyncio.create_task(run_pipeline(plan_id, run_body, queue, user.id))
     return {"plan_id": plan_id, "action": body.action}
 
 
 @app.get("/api/places/autocomplete")
-async def places_autocomplete(query: str = Query("", min_length=0, max_length=200)):
+async def places_autocomplete(
+    query: str = Query("", min_length=0, max_length=200),
+    user: AuthUser = Depends(get_current_user),
+):
     suggestions = await autocomplete_places(query)
     return {"suggestions": suggestions}
 
@@ -620,7 +689,7 @@ async def _regenerate_stop_audio(plan_id: str, place_id: str, state: dict) -> by
         return None
 
 
-async def _stream_stop_audio_bytes(plan_id: str, place_id: str) -> Response:
+async def _stream_stop_audio_bytes(plan_id: str, place_id: str, owner_id: str) -> Response:
     """Load or regenerate MP3 bytes for one stop narration."""
     audio_bytes = load_plan_audio(plan_id, place_id)
     if audio_bytes:
@@ -630,7 +699,7 @@ async def _stream_stop_audio_bytes(plan_id: str, place_id: str) -> Response:
             headers={"Cache-Control": "private, max-age=86400"},
         )
 
-    state = await _ensure_plan_session(plan_id)
+    state = await _ensure_plan_session(plan_id, owner_id)
     if not state:
         raise HTTPException(status_code=404, detail="Plan not found")
 
@@ -669,28 +738,38 @@ async def _stream_stop_audio_bytes(plan_id: str, place_id: str) -> Response:
 
 
 @app.get("/api/plan/{plan_id}/audio")
-async def stream_stop_audio(plan_id: str, place_id: str = Query(..., min_length=1)):
+async def stream_stop_audio(
+    plan_id: str,
+    place_id: str = Query(..., min_length=1),
+    user: AuthUser = Depends(get_current_user),
+):
     """Stream synthesized MP3 bytes for a stop — used by the frontend <audio> element."""
-    return await _stream_stop_audio_bytes(plan_id, place_id)
+    await _require_owned_plan(plan_id, user)
+    return await _stream_stop_audio_bytes(plan_id, place_id, user.id)
 
 
 @app.get("/api/plan/{plan_id}/audio/{place_id:path}")
-async def stream_stop_audio_legacy(plan_id: str, place_id: str):
+async def stream_stop_audio_legacy(
+    plan_id: str,
+    place_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
     """Backwards-compatible path route for older saved audio URLs."""
-    return await _stream_stop_audio_bytes(plan_id, place_id)
+    await _require_owned_plan(plan_id, user)
+    return await _stream_stop_audio_bytes(plan_id, place_id, user.id)
 
 
 @app.get("/api/trips")
-async def list_trips():
-    """List saved trips for the My Trips page — no agent re-run required."""
-    summaries = list_plan_summaries()
+async def list_trips(user: AuthUser = Depends(get_current_user)):
+    """List saved trips for the My Trips page — scoped to the authenticated user."""
+    summaries = list_plan_summaries(owner_id=user.id)
     return {"trips": [summary.model_dump(mode="json") for summary in summaries]}
 
 
 @app.get("/api/plan/{plan_id}")
-async def get_plan(plan_id: str):
+async def get_plan(plan_id: str, user: AuthUser = Depends(get_current_user)):
     """Return a saved plan summary + status for direct navigation."""
-    snapshot = load_plan_snapshot(plan_id)
+    snapshot = await _require_owned_plan(plan_id, user)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Plan not found")
     return {
@@ -701,10 +780,11 @@ async def get_plan(plan_id: str):
 
 
 @app.get("/api/plan/{plan_id}/tool-usage")
-async def get_tool_usage(plan_id: str):
+async def get_tool_usage(plan_id: str, user: AuthUser = Depends(get_current_user)):
+    await _require_owned_plan(plan_id, user)
     current_session = await session_service.get_session(
         app_name=APP_NAME,
-        user_id="user",
+        user_id=user.id,
         session_id=plan_id,
     )
     usage = load_tool_usage(None if current_session is None else current_session.state.get("tool_usage"))
@@ -712,9 +792,12 @@ async def get_tool_usage(plan_id: str):
 
 
 @app.get("/api/plan/{plan_id}/stream")
-async def stream_plan(plan_id: str):
+async def stream_plan(plan_id: str, user: AuthUser = Depends(get_current_user)):
+    owner_id = user.id
+    await _require_owned_plan(plan_id, user)
+
     async def event_generator():
-        state = await _ensure_plan_session(plan_id)
+        state = await _ensure_plan_session(plan_id, owner_id)
         snapshot = load_plan_snapshot(plan_id)
         if not state and snapshot is None:
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'Plan not found'}, 'progress': 100})}\n\n"

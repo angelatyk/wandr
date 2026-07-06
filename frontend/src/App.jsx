@@ -4,9 +4,11 @@ import RefinePage from './pages/RefinePage'
 import VerifyPage from './pages/VerifyPage'
 import ItineraryPage from './pages/ItineraryPage'
 import TripsPage from './pages/TripsPage'
+import SignInPage from './pages/SignInPage'
+import { useAuth } from './hooks/useAuth'
 
 /**
- * App — top-level route table.
+ * App — top-level route table, gated behind authentication.
  *
  * Route structure mirrors the Stitch flow:
  *   /           Onboarding hero + persona picker
@@ -16,6 +18,20 @@ import TripsPage from './pages/TripsPage'
  *   /trips      Saved trips library (no agent re-run)
  */
 export default function App() {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface">
+        <span className="material-symbols-outlined text-5xl text-primary animate-spin">sync</span>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <SignInPage />
+  }
+
   return (
     <Routes>
       <Route path="/"           element={<HomePage />} />
