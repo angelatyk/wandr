@@ -23,7 +23,6 @@ export default function App() {
       <Route path="/verify"     element={<VerifyPage />} />
       <Route path="/itinerary"  element={<ItineraryPage />} />
       <Route path="/trips"      element={<TripsPage />} />
-      {/* Catch-all → home */}
       <Route path="*"           element={<Navigate to="/" replace />} />
     </Routes>
   )

@@ -335,6 +335,7 @@ class ProfilerAgent(BaseAgent):
             contents=history,
             config=types.GenerateContentConfig(
                 system_instruction=PROFILER_SYSTEM_PROMPT,
+                max_output_tokens=settings.gemini_max_output_tokens_profiler,
             ),
             call_label="Profiler.generate_content",
         )
@@ -385,6 +386,7 @@ class ProfilerAgent(BaseAgent):
                 contents=[types.Content(role="user", parts=[types.Part(text=retry_prompt)])],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    max_output_tokens=settings.gemini_max_output_tokens_profiler,
                 ),
                 call_label="Profiler.retry_generate_content",
             )

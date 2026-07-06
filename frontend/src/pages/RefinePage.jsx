@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { FREE_TEXT_MAX } from '../constants/inputLimits'
 import { usePlanStream } from '../hooks/usePlanStream'
 
 const BG_IMAGE =
@@ -195,6 +196,7 @@ export default function RefinePage() {
               <textarea
                 id="reply"
                 rows={3}
+                maxLength={FREE_TEXT_MAX}
                 placeholder="Type your answer here..."
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}

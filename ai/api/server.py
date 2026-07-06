@@ -15,8 +15,10 @@ from google.genai.types import Content, Part
 
 from ai.config.settings import settings
 from ai.agents.orchestrator import orchestrator_agent
+from ai.api.rate_limit import client_ip, enforce, pipeline_limiter
 from ai.models.api import TripRequest, SelectRequest
 from ai.models.events import PipelineEvent
+from ai.models.input_limits import LOCATION_TEXT_MAX
 from ai.models.tool_usage import load_tool_usage
 from ai.tools.audio_store import load_plan_audio
 from ai.tools.maps import autocomplete_places
@@ -50,6 +52,37 @@ app.add_middleware(
 
 pipeline_queues: Dict[str, asyncio.Queue] = {}
 session_service = InMemorySessionService()
+
+
+def _plan_rate_limit(request: Request) -> None:
+    enforce(
+        f"plan:{client_ip(request)}",
+        settings.plan_rate_limit_max,
+        settings.plan_rate_limit_window_seconds,
+    )
+
+
+def _autocomplete_rate_limit(request: Request) -> None:
+    enforce(
+        f"autocomplete:{client_ip(request)}",
+        settings.autocomplete_rate_limit_max,
+        settings.autocomplete_rate_limit_window_seconds,
+    )
+
+
+def _acquire_pipeline_slot(client_key: str) -> None:
+    if not pipeline_limiter.try_acquire(
+        client_key,
+        settings.max_concurrent_pipelines_per_user,
+        settings.max_concurrent_pipelines_global,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "A trip is already being planned. "
+                "Please wait for it to finish before starting another."
+            ),
+        )
 
 
 def _state_with_event_delta(state: dict, event) -> dict:
@@ -211,12 +244,19 @@ async def _persist_pipeline_error(plan_id: str, message: str) -> None:
     )
 
 
-async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue):
+async def run_pipeline(
+    plan_id: str,
+    request: TripRequest,
+    queue: asyncio.Queue,
+    *,
+    concurrency_key: str | None = None,
+):
     """
     Execute the orchestrator pipeline for one turn and stream PipelineEvents
     into the queue.  Handles both the initial plan request and subsequent
     re-runs triggered by VerifyPage (refine / finalize).
     """
+    slot_key = concurrency_key or "default"
     try:
         await _clear_pipeline_error(plan_id)
 
@@ -407,21 +447,34 @@ async def run_pipeline(plan_id: str, request: TripRequest, queue: asyncio.Queue)
             data={"message": user_message},
             progress=100
         ).model_dump())
+    finally:
+        if concurrency_key is not None:
+            pipeline_limiter.release(slot_key)
 
 
 @app.post("/api/plan")
-async def create_plan(request: TripRequest):
-    plan_id = str(uuid4())
-    queue = asyncio.Queue()
-    pipeline_queues[plan_id] = queue
-    save_plan_snapshot(plan_id, {"trip_request": request.model_dump(exclude_none=True)})
-    asyncio.create_task(run_pipeline(plan_id, request, queue))
+async def create_plan(request: TripRequest, http_request: Request):
+    _plan_rate_limit(http_request)
+    client_key = client_ip(http_request)
+    _acquire_pipeline_slot(client_key)
+    try:
+        plan_id = str(uuid4())
+        queue = asyncio.Queue()
+        pipeline_queues[plan_id] = queue
+        save_plan_snapshot(plan_id, {"trip_request": request.model_dump(exclude_none=True)})
+        asyncio.create_task(
+            run_pipeline(plan_id, request, queue, concurrency_key=client_key)
+        )
+    except Exception:
+        pipeline_limiter.release(client_key)
+        raise
     return {"plan_id": plan_id}
 
 
 @app.post("/api/plan/{plan_id}/reply")
-async def reply_plan(plan_id: str, request: TripRequest):
+async def reply_plan(plan_id: str, request: TripRequest, http_request: Request):
     """Resume the pipeline after a profiler clarification answer."""
+    _plan_rate_limit(http_request)
     if plan_id not in pipeline_queues:
         pipeline_queues[plan_id] = asyncio.Queue()
     queue = pipeline_queues[plan_id]
@@ -449,12 +502,20 @@ async def reply_plan(plan_id: str, request: TripRequest):
                 list(stale_state.keys()), plan_id,
             )
 
-    asyncio.create_task(run_pipeline(plan_id, request, queue))
+    client_key = client_ip(http_request)
+    _acquire_pipeline_slot(client_key)
+    try:
+        asyncio.create_task(
+            run_pipeline(plan_id, request, queue, concurrency_key=client_key)
+        )
+    except Exception:
+        pipeline_limiter.release(client_key)
+        raise
     return {"plan_id": plan_id}
 
 
 @app.post("/api/plan/{plan_id}/select")
-async def select_places(plan_id: str, body: SelectRequest):
+async def select_places(plan_id: str, body: SelectRequest, http_request: Request):
     """
     Called by VerifyPage when the user:
       1. Submits the refine textarea — reruns the itinerary agent with their
@@ -470,6 +531,7 @@ async def select_places(plan_id: str, body: SelectRequest):
       final mode and writes to the "itinerary" key
     - Runs the pipeline
     """
+    _plan_rate_limit(http_request)
     logger.info(
         "select_places called. plan_id=%s action=%s confirmed=%s refinement=%r",
         plan_id, body.action, body.confirmed_place_ids, body.refinement_text,
@@ -575,12 +637,24 @@ async def select_places(plan_id: str, body: SelectRequest):
             "Refining itinerary for plan %s with text: %r", plan_id, body.refinement_text
         )
 
-    asyncio.create_task(run_pipeline(plan_id, run_body, queue))
+    client_key = client_ip(http_request)
+    _acquire_pipeline_slot(client_key)
+    try:
+        asyncio.create_task(
+            run_pipeline(plan_id, run_body, queue, concurrency_key=client_key)
+        )
+    except Exception:
+        pipeline_limiter.release(client_key)
+        raise
     return {"plan_id": plan_id, "action": body.action}
 
 
 @app.get("/api/places/autocomplete")
-async def places_autocomplete(query: str = Query("", min_length=0, max_length=200)):
+async def places_autocomplete(
+    request: Request,
+    query: str = Query("", min_length=0, max_length=LOCATION_TEXT_MAX),
+):
+    _autocomplete_rate_limit(request)
     suggestions = await autocomplete_places(query)
     return {"suggestions": suggestions}
 
