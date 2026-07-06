@@ -4,6 +4,8 @@
 
 _Built for the Kaggle AI Agents Capstone | Concierge Agents Track_
 
+🚀 **Live Application**: [wandr-teamasquare.vercel.app](https://wandr-teamasquare.vercel.app)
+
 ## 📖 Overview
 
 **Wandr** is a multi-agent travel guide designed to act as a concierge in your pocket. It replaces tedious research and generic routing with a customized itinerary tailored to a specific persona (e.g., foodie, historian, adventurer). Wandr goes beyond standard routing by generating a unique, persona-matched audio narration for each stop, transforming a regular walk into an immersive tour.
