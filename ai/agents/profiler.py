@@ -26,7 +26,7 @@ You MUST have ALL THREE of these before producing a persona:
 - destination — where the user wants to go (city, region, or country)
 - duration — how long the trip or outing will last (e.g. "2 days", "7 hours", "a weekend").
   Preserve the user's unit exactly: if they say "7 hours", output "7 hours" — never convert to days.
-- transit_preference — how the user prefers to get around (driving, transit, walking, or mixed).
+- transit_preference — how the user prefers to get around (driving, transit, walking, or mixed). Do NOT guess this. If they haven't explicitly mentioned it, you MUST ask a clarifying question.
 
 ## Optional fields
 - current_location — if the user mentions they are already at a specific location
@@ -59,7 +59,7 @@ no commentary, nothing else before or after the braces):
   "duration": "<e.g. 2 hours, 3 days>",
   "transit_preference": "<one of: driving | transit | walking | mixed>",
   "current_location": "<specific landmark/location or null>",
-  "type": "<one of: foodie | artist | historian | adventurer | local-life>",
+  "type": "<one of: foodie | artist | historian | adventurer | local-life | tourist>",
   "pace": "<one of: relaxed | moderate | packed>",
   "budget": "<one of: budget | mid | luxury>",
   "notes": "<any special requests, interests, dietary needs, must-sees, etc. — empty string if none>"
@@ -68,7 +68,7 @@ no commentary, nothing else before or after the braces):
 Rules for each field:
 - transit_preference: Determine from the user's input (e.g., "I have a rental car" -> driving).
 - type: if the user explicitly says "I'm a foodie" etc., use that directly.
-  Otherwise infer from language clues. Default to "adventurer" if ambiguous.
+  Otherwise infer from language clues. Default to "tourist" if ambiguous.
 - pace: infer from "take it easy", "see as much as possible", etc. Default "moderate".
 - budget: infer from "backpacking", "boutique", "Michelin", etc. Default "mid".
 - notes: preserve the user's own wording. Use "" if nothing extra was mentioned.
@@ -257,8 +257,9 @@ def _persona_from_json_or_none(raw: str) -> PersonaModel | None:
             "local-life": "local-life",
             "local life": "local-life",
             "local": "local-life",
+            "tourist": "tourist",
         },
-        "adventurer",
+        "tourist",
     )
     data["pace"] = _normalise_enum(
         data.get("pace"),
@@ -351,7 +352,7 @@ class ProfilerAgent(BaseAgent):
             m.parts[0].text for m in history if m.role == "user" and m.parts and m.parts[0].text
         )
         fields = _extract_named_fields(combined_user_text)
-        has_required_fields = bool(fields.get("destination")) and bool(fields.get("duration"))
+        has_required_fields = bool(fields.get("destination")) and bool(fields.get("duration")) and bool(fields.get("transit_preference"))
         impossible_trip = _looks_impossible_trip(
             fields.get("current_location"),
             fields.get("destination"),
@@ -410,7 +411,7 @@ class ProfilerAgent(BaseAgent):
                     },
                     "mixed",
                 ),
-                type="adventurer",
+                type="tourist",
                 pace="moderate",
                 budget="mid",
                 notes=fields.get("notes", ""),

@@ -64,6 +64,10 @@ _PERSONA_SEARCH_QUERIES: dict[str, tuple[str, ...]] = {
         "local neighborhoods cafes and markets in {destination}",
         "everyday local hangouts and community districts in {destination}",
     ),
+    "tourist": (
+        "top attractions and must-see landmarks in {destination}",
+        "most popular tourist sites in {destination}",
+    ),
 }
 
 

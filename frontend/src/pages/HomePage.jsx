@@ -32,7 +32,7 @@ export default function HomePage() {
   const [currentLocation, setCurrentLocation] = useState("");
   const [destination, setDestination] = useState("");
   const [duration, setDuration] = useState("");
-  const [transitPreference, setTransitPreference] = useState("walking");
+  const [transitPreference, setTransitPreference] = useState("");
   const [selectedPersona, setSelectedPersona] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentBgIndex, setCurrentBgIndex] = useState(0);
@@ -50,7 +50,7 @@ export default function HomePage() {
     setDestination("");
     setDuration("");
     setSelectedPersona(null);
-    setTransitPreference("walking");
+    setTransitPreference("");
   };
 
   useEffect(() => {

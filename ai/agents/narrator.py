@@ -32,6 +32,7 @@ def persona_voice_style(persona: PersonaModel) -> str:
         "artist": "contemplative",
         "adventurer": "energetic",
         "local-life": "warm",
+        "tourist": "energetic",
     }[persona.type]
 
 
@@ -79,6 +80,7 @@ if audio would fail later.
 | artist | contemplative |
 | adventurer | energetic |
 | local-life | warm |
+| tourist | energetic |
 
 ## Script guidelines
 

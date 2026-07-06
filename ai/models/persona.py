@@ -10,7 +10,7 @@ class PersonaModel(BaseModel):
     transit_preference: Literal["driving", "transit", "walking", "mixed"] = "mixed"
 
     # Traveller persona classification
-    type: Literal["foodie", "artist", "historian", "adventurer", "local-life"]
+    type: Literal["foodie", "artist", "historian", "adventurer", "local-life", "tourist"] = "tourist"
     pace: Literal["relaxed", "moderate", "packed"]
     budget: Literal["budget", "mid", "luxury"]
 
