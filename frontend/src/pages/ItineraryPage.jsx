@@ -135,7 +135,6 @@ export default function ItineraryPage() {
           {[
             { label: 'Explore', to: '/' },
             { label: 'My Trips', to: '/trips', active: false },
-            { label: 'Saved', to: `/verify?planId=${planId || ''}` },
           ].map(({ label, to, active }) => (
             <a
               key={label}

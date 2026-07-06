@@ -382,6 +382,22 @@ function MapLayers({
   }, [])
 
   const [geocodedCenter, setGeocodedCenter] = useState(null)
+  const [clickedPlaceId, setClickedPlaceId] = useState(null)
+
+  const handleMapClick = useCallback((e) => {
+    const placeId = e.detail?.placeId
+    if (placeId) {
+      if (placeId === clickedPlaceId) {
+        // Stop default info window from re-opening if it's the same POI
+        e.stop()
+        setClickedPlaceId(null)
+      } else {
+        setClickedPlaceId(placeId)
+      }
+    } else {
+      setClickedPlaceId(null)
+    }
+  }, [clickedPlaceId])
 
   useEffect(() => {
     if (allStops.length > 0 || !geocodingLib || !destination) return
@@ -429,6 +445,7 @@ function MapLayers({
         zoomControl={true}
         gestureHandling="greedy"
         style={{ width: '100%', height: '100%' }}
+        onClick={handleMapClick}
       >
         {allStops.length > 0 && <BoundsController stops={allStops} />}
         <MapPanController activeStopId={activeStopId} stops={allStops} />
