@@ -4,7 +4,7 @@ import TopNav from "../components/TopNav";
 import Footer from "../components/Footer";
 import PersonaGrid from "../components/PersonaGrid";
 import LocationAutocomplete from "../components/LocationAutocomplete";
-import { PERSONAS } from "../data/mockItinerary";
+import { PERSONAS } from "../data/personas";
 
 // Dynamically import all images in src/assets starting with 'hero-bg'
 const globImages = import.meta.glob("../assets/hero-bg*.{png,jpg,jpeg,webp}", {

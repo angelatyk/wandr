@@ -50,7 +50,7 @@ function StopImage({ src, alt, className }) {
  * and the Itinerary page (with a play button).
  *
  * Props:
- *   stop         — stop data object from mockItinerary
+ *   stop         — stop data object from the itinerary
  *   variant      — 'verify' | 'itinerary'
  *   included     — controlled toggle state (verify variant)
  *   onToggle     — () => void (verify variant)

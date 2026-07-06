@@ -1,8 +1,8 @@
 /**
- * Mock itinerary data — static placeholder used throughout the UI.
+ * Persona definitions used by the trip planner UI.
  *
- * Shape mirrors what the real Wandr backend will eventually return.
- * When the API is ready, swap this import for a real fetch call.
+ * These drive the persona picker on the home page and are real app config,
+ * not placeholder data.
  */
 
 /** @type {import('./types').Persona[]} */
@@ -38,5 +38,3 @@ export const PERSONAS = [
     description: 'Neighborhood cafes, parks, and daily rhythms.',
   },
 ]
-
-
