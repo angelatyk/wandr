@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+
 
 class StopModel(BaseModel):
     place_id: str
@@ -9,15 +9,20 @@ class StopModel(BaseModel):
     order: int
     photo_url: str = ""
 
+
 class ItineraryDay(BaseModel):
     day: int
-    stops: List[StopModel]
+    stops: list[StopModel]
+
 
 class ItineraryModel(BaseModel):
     destination: str
-    days: List[ItineraryDay]
+    days: list[ItineraryDay]
+
 
 class PlaceOptionModel(BaseModel):
+    """A single candidate place shown to the user during the options/verify step."""
+
     place_id: str
     name: str
     address: str
@@ -28,10 +33,14 @@ class PlaceOptionModel(BaseModel):
     hours_of_operation: str
     persona_note: str
 
+
 class DayOptionsModel(BaseModel):
     day: int
-    options: List[PlaceOptionModel]
+    options: list[PlaceOptionModel]
+
 
 class ItineraryOptionsModel(BaseModel):
+    """Itinerary in "options" mode — user must confirm/refine before finalizing."""
+
     destination: str
-    days: List[DayOptionsModel]
+    days: list[DayOptionsModel]

@@ -1,7 +1,11 @@
+from typing import Any, Literal
+
 from pydantic import BaseModel
-from typing import Literal, Any, Optional
+
 
 class PipelineEvent(BaseModel):
+    """SSE payload streamed to the frontend for each pipeline phase transition."""
+
     type: Literal[
         "profiler_clarification",
         "profiler_done",
@@ -10,7 +14,7 @@ class PipelineEvent(BaseModel):
         "stop_done",
         "logistics_done",
         "complete",
-        "error"
+        "error",
     ]
-    data: Optional[dict[str, Any]] = None
+    data: dict[str, Any] | None = None
     progress: int

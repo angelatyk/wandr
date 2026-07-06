@@ -1,3 +1,11 @@
+"""Google Cloud Text-to-Speech client with GCS upload and inline-data fallbacks.
+
+Delivery priority:
+  1. GCS signed URL  — preferred for production (serverless-safe, stream-friendly)
+  2. Local disk file  — development fallback (not available on serverless)
+  3. Inline data URL  — last resort; always works but makes SSE payloads large
+"""
+
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
@@ -206,6 +214,8 @@ async def _upload_audio_to_gcs(
             client = storage.Client(project=project_id, credentials=credentials)
             blob = client.bucket(bucket_name).blob(_gcs_object_name(script, voice_style))
             blob.cache_control = "private, max-age=0, no-transform"
+            # Sign before upload: GCS signs against bucket/path metadata, not file
+            # existence, so the URL is valid immediately once the upload completes.
             signed_url = _generate_signed_blob_url(blob, credentials, expiration)
             blob.upload_from_string(audio_bytes, content_type="audio/mpeg")
         except (GoogleCloudError, GoogleAuthError, OSError, ValueError) as exc:

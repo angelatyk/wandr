@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -11,13 +9,13 @@ class PlaceDetails(BaseModel):
     address: str
     opening_hours: str
     editorial_summary: str = ""
-    rating: Optional[float] = None
-    user_rating_count: Optional[int] = None
-    types: List[str] = Field(default_factory=list)
+    rating: float | None = None
+    user_rating_count: int | None = None
+    types: list[str] = Field(default_factory=list)
     business_status: str = "UNKNOWN"
     is_seasonal_or_closed: bool = False
-    lat: Optional[float] = None
-    lng: Optional[float] = None
+    lat: float | None = None
+    lng: float | None = None
     source: str = "api"  # "api" | "mock"
 
 
@@ -29,11 +27,11 @@ class PlaceSearchResult(BaseModel):
     address: str
     opening_hours: str = "Unknown"
     editorial_summary: str = ""
-    rating: Optional[float] = None
-    user_rating_count: Optional[int] = None
-    types: List[str] = Field(default_factory=list)
+    rating: float | None = None
+    user_rating_count: int | None = None
+    types: list[str] = Field(default_factory=list)
     business_status: str = "UNKNOWN"
     photo_url: str = ""
-    lat: Optional[float] = None
-    lng: Optional[float] = None
+    lat: float | None = None
+    lng: float | None = None
     source: str = "api"  # "api" | "mock" | "confirmed"
