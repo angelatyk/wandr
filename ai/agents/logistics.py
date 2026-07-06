@@ -137,10 +137,14 @@ async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> Route
     for index, stop in enumerate(ordered):
         place = place_details.get(stop.place_id)
         if not place:
-            place = await get_place_details(stop.place_id)
+            try:
+                place = await get_place_details(stop.place_id)
+            except Exception as exc:
+                logger.error("Failed to fetch place details for %s during route generation: %s", stop.place_id, exc)
+                place = None
             
-        lat = place.lat if place.lat is not None else _DEFAULT_LAT
-        lng = place.lng if place.lng is not None else _DEFAULT_LNG
+        lat = place.lat if place and place.lat is not None else _DEFAULT_LAT
+        lng = place.lng if place and place.lng is not None else _DEFAULT_LNG
 
         travel_min = 0
         travel_source = "none"

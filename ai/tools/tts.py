@@ -264,6 +264,11 @@ async def generate_audio(
 
     # Persist to local disk as a fallback (works for local development, but not serverless)
     if plan_id and place_id:
-        return await save_plan_audio(plan_id, place_id, audio_bytes)
+        try:
+            return await save_plan_audio(plan_id, place_id, audio_bytes)
+        except Exception as exc:
+            logger.error("Failed to save local audio fallback: %s", exc)
+            # If local save fails, we still want to return the inline data URL
+            # rather than crashing the pipeline, especially in serverless environments.
 
     return _audio_data_url(audio_bytes)
