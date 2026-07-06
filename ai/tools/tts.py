@@ -253,10 +253,6 @@ async def generate_audio(
         voice_style,
     )
 
-    # Persist to disk whenever we know the plan/stop — survives refresh and server restarts.
-    if plan_id and place_id:
-        return await save_plan_audio(plan_id, place_id, audio_bytes)
-
     use_gcs = _uses_gcs_storage() and not settings.tts_prefer_inline
     if use_gcs:
         try:
@@ -264,6 +260,10 @@ async def generate_audio(
             logger.info("TTS uploaded audio to GCS (voice_style=%s).", voice_style)
             return signed_url
         except _StorageUnavailableError as exc:
-            logger.warning("GCS upload unavailable, falling back to inline audio: %s", exc)
+            logger.warning("GCS upload unavailable, falling back to local/inline audio: %s", exc)
+
+    # Persist to local disk as a fallback (works for local development, but not serverless)
+    if plan_id and place_id:
+        return await save_plan_audio(plan_id, place_id, audio_bytes)
 
     return _audio_data_url(audio_bytes)
