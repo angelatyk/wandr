@@ -238,8 +238,8 @@ export default function HomePage() {
                   <div className="relative flex-1 flex flex-col justify-center bg-surface-white/70 rounded-xl px-4 py-3 border border-transparent focus-within:border-outline-variant transition-colors min-w-0">
                     <label
                       htmlFor="duration"
-                      className="text-sm font-medium text-on-surface-muted mb-1 flex items-start gap-2 leading-snug cursor-pointer"
-                      style={{ fontFamily: "var(--font-body)" }}
+                      className="text-sm font-medium text-on-surface-muted mb-1 flex items-start gap-2 leading-snug"
+                      style={{ fontFamily: "var(--font-body)", cursor: 'default' }}
                     >
                       <span className="material-symbols-outlined text-[20px] shrink-0">
                         schedule
