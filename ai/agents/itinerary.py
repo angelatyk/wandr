@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from collections import defaultdict
 from typing import AsyncGenerator
 
@@ -41,6 +42,8 @@ Your job is to build a personalised itinerary based on the user's travel persona
 
 ## User Persona
 Destination: {destination}
+Current Location: {current_location}
+Transit Preference: {transit_preference}
 Duration: {duration}
 Type: {type}
 Pace: {pace}
@@ -60,6 +63,10 @@ Notes: {notes}
 You are given factual candidate places already fetched from Google Places.
 Use ONLY these candidates. Do not use outside knowledge, do not invent new places,
 and do not change a place_id.
+
+IMPORTANT: For multi-day trips, group places geographically by day (cluster them into regions) to minimize driving distances and prevent zig-zagging between distant areas. Day 1 should start in the region closest to the user's Current Location.
+
+CORRIDOR RULE (only applies when Current Location is provided and is different from Destination): Every stop you include must be geographically plausible along the travel route from the Current Location to the Destination. Do NOT include stops that are in an unrelated region or require significant backtracking in the wrong direction. If a candidate from the list is clearly off-route, skip it and use another candidate instead. When no Current Location is given, this rule does not apply — simply select the best candidates within or near the Destination.
 
 Output ONLY a raw JSON object (no markdown fences, no commentary) that matches
 this schema exactly:
@@ -183,7 +190,7 @@ def _day_count_from_duration(duration: str | None) -> int:
 def _search_limit_for_days(day_count: int, parsed: ParsedDuration) -> int:
     if parsed.is_single_outing:
         return max(4, min(10, max_options_per_day(parsed, day_count) + 2))
-    return max(6, min(18, day_count * 6))
+    return max(6, min(40, day_count * 5))
 
 
 def _candidate_from_confirmed_place(confirmed_place: dict) -> PlaceSearchResult:
@@ -212,9 +219,23 @@ def _suggested_duration(candidate: PlaceSearchResult) -> str:
 
 
 def _default_description(candidate: PlaceSearchResult) -> str:
+    """Synthesize a short description when the Places API returns no editorial summary.
+
+    Prefer actual editorial text. Fall back to a sentence built from place types and
+    rating so we never echo the raw address as a description.
+    """
     if candidate.editorial_summary:
         return candidate.editorial_summary
-    return f"A notable stop in {candidate.address}."
+
+    # Build a readable type label (e.g. "market and café" from raw type strings)
+    readable_types = [t.replace("_", " ") for t in (candidate.types or [])[:2]]
+    type_label = " and ".join(readable_types) if readable_types else "point of interest"
+
+    rating_clause = ""
+    if candidate.rating and candidate.rating >= 4.0:
+        rating_clause = f", rated {candidate.rating:.1f}★"
+
+    return f"A {type_label}{rating_clause} worth visiting in {candidate.name}."
 
 
 def _default_persona_note(candidate: PlaceSearchResult, persona_type: str) -> str:
@@ -226,6 +247,45 @@ def _is_must_see(candidate: PlaceSearchResult) -> bool:
     if candidate.rating is None:
         return False
     return candidate.rating >= 4.5 or (candidate.user_rating_count or 0) >= 15000
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km between two lat/lng points."""
+    r = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _is_off_corridor(
+    candidate: PlaceSearchResult,
+    origin_lat: float,
+    origin_lng: float,
+    dest_lat: float,
+    dest_lng: float,
+) -> bool:
+    """Return True if a candidate stop is implausibly off the origin→destination corridor.
+
+    Uses a simple ellipse test: the sum of distances from the stop to each focus
+    (origin and destination) must not exceed the direct origin→destination distance
+    by more than a generous slack factor (2.5×). This allows realistic detours and
+    scenic routes while catching stops in the completely wrong direction (e.g. Toronto
+    on a PEI→Nova Scotia trip).
+    """
+    if candidate.lat is None or candidate.lng is None:
+        # No coords to check — let the LLM's corridor instruction handle it
+        return False
+
+    direct_km = _haversine_km(origin_lat, origin_lng, dest_lat, dest_lng)
+    if direct_km < 50:  # short local trip — corridor constraint doesn't add value
+        return False
+
+    stop_to_origin = _haversine_km(candidate.lat, candidate.lng, origin_lat, origin_lng)
+    stop_to_dest = _haversine_km(candidate.lat, candidate.lng, dest_lat, dest_lng)
+    slack_factor = 2.5
+    return (stop_to_origin + stop_to_dest) > direct_km * slack_factor
 
 
 def _place_option_from_candidate(
@@ -348,9 +408,21 @@ def _normalize_options(
     confirmed: list[dict],
     *,
     parsed: ParsedDuration,
+    corridor_origin: tuple[float, float] | None = None,
+    corridor_dest: tuple[float, float] | None = None,
 ) -> ItineraryOptionsModel:
     raw_options = _enforce_day_structure(raw_options, day_count, parsed, confirmed_count=len(confirmed))
     candidate_map = {candidate.place_id: candidate for candidate in candidates}
+
+    # Build corridor filter — only active when both origin and destination coords are known.
+    def _is_corridor_violation(candidate: PlaceSearchResult) -> bool:
+        if corridor_origin is None or corridor_dest is None:
+            return False
+        return _is_off_corridor(
+            candidate,
+            corridor_origin[0], corridor_origin[1],
+            corridor_dest[0], corridor_dest[1],
+        )
     normalized_by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in range(1, day_count + 1)}
     seen_place_ids: set[str] = set()
     seen_names: set[str] = set()
@@ -362,7 +434,14 @@ def _normalize_options(
             candidate = candidate_map.get(option.place_id)
             if candidate is None or candidate.place_id in seen_place_ids:
                 continue
-            
+
+            if _is_corridor_violation(candidate):
+                logger.warning(
+                    "Corridor filter rejected off-route candidate: %s (%s)",
+                    candidate.name, candidate.address,
+                )
+                continue
+
             name_key = candidate.name.strip().lower()
             if name_key in seen_names:
                 continue
@@ -644,9 +723,46 @@ class ItineraryAgent(BaseAgent):
             if place.get("place_id") and place["place_id"] not in {candidate.place_id for candidate in search_candidates}:
                 search_candidates.append(_candidate_from_confirmed_place(place))
 
+        # ── Corridor coordinates ────────────────────────────────────────────
+        # When current_location is provided we resolve both endpoints to lat/lng
+        # so the corridor filter can reject off-route candidates (Bug 1).
+        # This is best-effort — if geocoding fails we log and disable the filter.
+        current_location: str | None = persona_dict.get("current_location")
+        corridor_origin: tuple[float, float] | None = None
+        corridor_dest: tuple[float, float] | None = None
+
+        if current_location:
+            try:
+                origin_hits = await places_search(
+                    destination=current_location,
+                    persona_type=persona_type,
+                    limit=1,
+                )
+                if origin_hits and origin_hits[0].lat is not None and origin_hits[0].lng is not None:
+                    corridor_origin = (origin_hits[0].lat, origin_hits[0].lng)
+                    logger.info("Corridor origin resolved: %s → %s", current_location, corridor_origin)
+                else:
+                    logger.warning("Could not geocode current_location=%r for corridor filter.", current_location)
+            except Exception as exc:
+                logger.warning("Corridor origin geocode failed for %r: %s", current_location, exc)
+
+            if corridor_origin is not None:
+                # Use the centroid of the destination search results as the corridor destination.
+                lats = [c.lat for c in search_candidates if c.lat is not None]
+                lngs = [c.lng for c in search_candidates if c.lng is not None]
+                if lats and lngs:
+                    corridor_dest = (sum(lats) / len(lats), sum(lngs) / len(lngs))
+                    logger.info("Corridor dest centroid: %s", corridor_dest)
+                else:
+                    logger.warning("No candidate coordinates available — corridor filter disabled.")
+                    corridor_origin = None  # disable if we can't anchor the other end
+
+
         # Build system prompt, injecting confirmed places + refinement text.
         system_prompt = ITINERARY_SYSTEM_PROMPT.format(
             destination=destination,
+            current_location=persona_dict.get("current_location", "Unknown"),
+            transit_preference=persona_dict.get("transit_preference", "Unknown"),
             duration=duration_raw or "Unknown",
             type=persona_type,
             pace=persona_dict.get("pace", "Unknown"),
@@ -745,6 +861,8 @@ class ItineraryAgent(BaseAgent):
                     candidates=search_candidates,
                     confirmed=confirmed,
                     parsed=parsed,
+                    corridor_origin=corridor_origin,
+                    corridor_dest=corridor_dest,
                 )
             options = _enforce_day_structure(options, day_count, parsed)
 

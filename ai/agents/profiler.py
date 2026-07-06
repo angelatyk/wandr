@@ -423,8 +423,35 @@ class ProfilerAgent(BaseAgent):
             )
 
         if persona is not None:
+            # Preserve the existing current_location from session state unless the user
+            # explicitly signals a location change in their message. current_location is a
+            # one-time fact (where the trip starts from) — it must never be silently cleared
+            # or re-derived on a refine pass.
+            existing_persona = ctx.session.state.get("persona") or {}
+            existing_origin = existing_persona.get("current_location")
+            if existing_origin:
+                location_change_signals = (
+                    "actually i'm",
+                    "i'm now at",
+                    "i am now at",
+                    "starting from",
+                    "leaving from",
+                    "departing from",
+                    "new starting point",
+                )
+                user_text_lower = combined_user_text.lower()
+                user_changed_origin = any(sig in user_text_lower for sig in location_change_signals)
+                if not user_changed_origin:
+                    # Carry the original origin forward unconditionally.
+                    persona = persona.model_copy(update={"current_location": existing_origin})
+                    logger.debug(
+                        "Profiler preserved existing current_location=%r on refine pass.",
+                        existing_origin,
+                    )
+
             # We have a valid persona — write it to state and let the pipeline continue.
             logger.info("Profiler successfully resolved persona: %s", persona.model_dump())
+
             payload_text = json.dumps(persona.model_dump())
             yield Event(
                 author=self.name,

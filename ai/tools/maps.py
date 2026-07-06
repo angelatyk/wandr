@@ -20,7 +20,7 @@ MAPS_DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 PLACE_SEARCH_FIELD_MASK = (
     "places.id,places.displayName,places.formattedAddress,places.regularOpeningHours,"
     "places.editorialSummary,places.rating,places.userRatingCount,places.types,"
-    "places.businessStatus,places.photos"
+    "places.businessStatus,places.photos,places.location"
 )
 PLACE_DETAILS_FIELD_MASK = (
     "id,displayName,formattedAddress,regularOpeningHours,editorialSummary,"
@@ -119,6 +119,7 @@ def _build_search_result(
     photo_url: str = "",
     source: str = "api",
 ) -> PlaceSearchResult:
+    lat, lng = _location_from_payload(payload)
     return PlaceSearchResult(
         place_id=payload.get("id") or "",
         name=(payload.get("displayName") or {}).get("text") or "Unknown",
@@ -130,6 +131,8 @@ def _build_search_result(
         types=list(payload.get("types") or []),
         business_status=payload.get("businessStatus") or "UNKNOWN",
         photo_url=photo_url,
+        lat=lat,
+        lng=lng,
         source=source,
     )
 
@@ -309,7 +312,11 @@ async def places_search(destination: str, persona_type: str, limit: int = 5, exp
             if remaining == 0:
                 break
 
-            payload = await _fetch_places_search(query, max(remaining, 1))
+            # Google Places API restricts pageSize to a maximum of 20.
+            # Our queries tuple contains multiple fallbacks, so the loop will 
+            # naturally roll over to the next query to accumulate up to the limit.
+            page_size = min(remaining, 20)
+            payload = await _fetch_places_search(query, max(page_size, 1))
             for place_payload in payload.get("places", []):
                 place_id = place_payload.get("id")
                 if not place_id or place_id in unique_places:

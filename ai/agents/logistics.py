@@ -34,6 +34,8 @@ Your job is to determine the absolute optimal chronological route sequence for t
 
 ## User Persona
 Destination: {destination}
+Current Location: {current_location}
+Transit Preference: {transit_preference}
 Duration: {duration}
 Pace: {pace}
 Type: {type}
@@ -44,10 +46,14 @@ Type: {type}
 ## Your Task
 You are given a list of finalized stops grouped by day. For each day, you must output the most optimal chronological sequence of place IDs.
 When determining the order, you MUST consider:
-1. Geographic proximity (use the coordinates provided to minimize zig-zagging across the city).
+1. Geographic proximity (use the coordinates provided to minimize zig-zagging).
 2. Opening hours (don't suggest visiting a place before it opens or after it closes).
-3. The user's pace and logical resting/eating patterns (assume they need time to rest or eat between dense activities, even if generic rest stops aren't explicitly listed).
-4. The general flow of a day (e.g., start early at popular museums to avoid crowds, end at scenic views or nightlife districts).
+3. The user's pace and logical resting/eating patterns.
+4. The general flow of a day (e.g., start early at popular spots, end at scenic or nightlife areas).
+
+## Day 1 Starting Point (CRITICAL)
+- If Current Location is provided (not "Unknown" or empty): Day 1 MUST begin with the stop whose coordinates are geographically nearest to the Current Location. Use the Current Location as the anchor point — route Day 1 outward from there.
+- If Current Location is NOT provided: Choose whichever Day 1 stop, when used as the starting point, produces the most geographically efficient overall route for that day (minimizes total travel distance). Do NOT default to the list order — evaluate which stop makes the best anchor.
 
 Output ONLY a raw JSON object (no markdown fences, no commentary) that matches this schema exactly:
 {{
@@ -140,19 +146,24 @@ async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> Route
         travel_source = "none"
         if index > 0:
             prev = ordered[index - 1]
-            if prev.day == stop.day:
-                try:
-                    leg = await get_directions(prev.place_id, stop.place_id)
-                    travel_min = int(leg.get("duration_min", 0))
+            is_same_day = prev.day == stop.day
+            try:
+                leg = await get_directions(prev.place_id, stop.place_id)
+                travel_min = int(leg.get("duration_min", 0))
+                if is_same_day:
                     travel_source = "api" if leg.get("source") == "api" else "none"
-                    total_travel_min += travel_min
-                except MapsAPIError as exc:
-                    logger.warning(
-                        "Skipping synthetic travel leg for %s -> %s: %s",
-                        prev.place_id,
-                        stop.place_id,
-                        exc,
-                    )
+                else:
+                    # Cross-day leg: tag as "overnight" so the UI can present it
+                    # as "~N min drive to tomorrow's first stop" rather than in-day travel.
+                    travel_source = "overnight"
+                total_travel_min += travel_min
+            except MapsAPIError as exc:
+                logger.warning(
+                    "Skipping travel leg for %s -> %s: %s",
+                    prev.place_id,
+                    stop.place_id,
+                    exc,
+                )
 
         route_stops.append(
             RouteStop(
@@ -167,12 +178,13 @@ async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> Route
         )
 
     logger.info(
-        "Route built for %s: %d stops, %d min total walking",
+        "Route built for %s: %d stops, %d min total travel",
         itinerary.destination,
         len(route_stops),
         total_travel_min,
     )
     return RouteModel(stops=route_stops, total_travel_min=total_travel_min)
+
 
 
 class LogisticsAgent(BaseAgent):
@@ -213,6 +225,8 @@ class LogisticsAgent(BaseAgent):
 
         system_prompt = LOGISTICS_SYSTEM_PROMPT.format(
             destination=persona_dict.get("destination", itinerary.destination),
+            current_location=persona_dict.get("current_location", "Unknown"),
+            transit_preference=persona_dict.get("transit_preference", "Unknown"),
             duration=persona_dict.get("duration", "Unknown"),
             pace=persona_dict.get("pace", "Unknown"),
             type=persona_dict.get("type", "Unknown"),
@@ -288,9 +302,27 @@ class LogisticsAgent(BaseAgent):
             logger.info("LogisticsAgent proceeding without LLM optimization due to parsing errors.")
             
         route = await run_logistics(itinerary, place_details)
-        
+
+        # Sanity check: warn when total travel time implausibly exceeds the trip duration.
+        # This catches outlier stops (e.g. a stop in the wrong country) that inflate the sum.
+        duration_raw = persona_dict.get("duration", "")
+        if duration_raw:
+            from ai.models.duration import parse_trip_duration
+            parsed_duration = parse_trip_duration(duration_raw)
+            total_hours = parsed_duration.total_hours or (parsed_duration.day_count * 24)
+            trip_minutes = total_hours * 60
+            if trip_minutes > 0 and route.total_travel_min > trip_minutes:
+                logger.warning(
+                    "total_travel_min=%d exceeds trip duration of %d min (%s). "
+                    "Possible off-route stop in the itinerary.",
+                    route.total_travel_min,
+                    int(trip_minutes),
+                    duration_raw,
+                )
+
         current_usage = load_tool_usage(ctx.session.state.get("tool_usage"))
         updated_usage = merge_tool_usage(current_usage, usage_from_route(route))
+
 
         yield Event(
             author=self.name,

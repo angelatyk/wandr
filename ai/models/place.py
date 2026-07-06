@@ -34,4 +34,6 @@ class PlaceSearchResult(BaseModel):
     types: List[str] = Field(default_factory=list)
     business_status: str = "UNKNOWN"
     photo_url: str = ""
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     source: str = "api"  # "api" | "mock" | "confirmed"

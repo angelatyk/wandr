@@ -52,8 +52,7 @@ export default function VerifyPage() {
   const [refineText, setRefineText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [actionStatus, setActionStatus] = useState(null) // 'refining' | 'finalizing' | null
-  const [showConfirmModal, setShowConfirmModal] = useState(false)
-  const [exceededData, setExceededData] = useState(null)
+  const [confirmModal, setConfirmModal] = useState(null) // { type: 'empty_days', daysStr: string } or { type: 'duration', places: [], calculated: number }
 
   // Redirect if no planId
   useEffect(() => {
@@ -144,19 +143,31 @@ export default function VerifyPage() {
     callSelect('refine')
   }
 
-  const handleFinalize = () => {
+  const handleFinalize = (skipEmptyCheck = false) => {
     if (submitting) return
 
     let totalSuggested = 0
     let placesList = []
+    const emptyDays = []
     
     for (const day of itineraryOptions?.days ?? []) {
+      let dayHasSelection = false
       for (const place of day.options ?? []) {
         if (confirmed.has(place.place_id)) {
+          dayHasSelection = true
           totalSuggested += parseSuggestedDuration(place.suggested_duration)
           placesList.push(place.name)
         }
       }
+      if (!dayHasSelection) {
+        emptyDays.push(day.day)
+      }
+    }
+    
+    if (!skipEmptyCheck && emptyDays.length > 0) {
+      const daysStr = emptyDays.map(d => `Day ${d}`).join(', ')
+      setConfirmModal({ type: 'empty_days', daysStr })
+      return
     }
     
     const maxDuration = parseDurationString(duration)
@@ -183,11 +194,11 @@ export default function VerifyPage() {
     const totalRequired = totalSuggested + travelTime + eatingTime + restingTime
     
     if (maxDuration > 0 && totalRequired > maxDuration) {
-      setExceededData({
+      setConfirmModal({
+        type: 'duration',
         places: placesList,
         calculated: Math.round(totalRequired * 10) / 10
       })
-      setShowConfirmModal(true)
       return
     }
 
@@ -497,7 +508,7 @@ export default function VerifyPage() {
         {/* Finalize button */}
         <button
           id="finalize-itinerary-btn"
-          onClick={handleFinalize}
+          onClick={() => handleFinalize(false)}
           disabled={isLoading || hasError || confirmedCount === 0}
           className="pointer-events-auto bg-primary text-white font-semibold text-xs uppercase tracking-widest px-8 py-4 rounded-2xl flex items-center justify-center min-w-[280px] gap-2 active:scale-95 transition-all hover:bg-primary-tint shadow-[0px_8px_32px_rgba(10,25,47,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ fontFamily: 'var(--font-body)' }}
@@ -510,7 +521,7 @@ export default function VerifyPage() {
       </div>
 
       {/* Modal */}
-      {showConfirmModal && (
+      {confirmModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-surface/80 backdrop-blur-sm">
           <div 
             className="bg-surface-white border border-outline-variant/30 shadow-[var(--shadow-raised)] rounded-3xl p-8 relative"
@@ -519,15 +530,23 @@ export default function VerifyPage() {
             <h3 className="text-2xl font-semibold text-primary mb-4" style={{ fontFamily: 'var(--font-display)' }}>
               Are you sure?
             </h3>
-            <p className="text-base text-on-surface-muted mb-6" style={{ fontFamily: 'var(--font-body)' }}>
-              You have selected to visit the following places:
-              <br /><br />
-              <strong className="text-on-surface block mb-4 break-words">{exceededData?.places.join(', ')}</strong>
-              But the total time needed is ~{exceededData?.calculated} hours, which exceeds the time you specified ({duration}). Would you like to proceed anyway?
-            </p>
+            
+            {confirmModal.type === 'empty_days' ? (
+              <p className="text-base text-on-surface-muted mb-6" style={{ fontFamily: 'var(--font-body)' }}>
+                You have not selected any stops for <strong>{confirmModal.daysStr}</strong>. Would you like to proceed anyway?
+              </p>
+            ) : (
+              <p className="text-base text-on-surface-muted mb-6" style={{ fontFamily: 'var(--font-body)' }}>
+                You have selected to visit the following places:
+                <br /><br />
+                <strong className="text-on-surface block mb-4 break-words">{confirmModal.places.join(', ')}</strong>
+                But the total time needed is ~{confirmModal.calculated} hours, which exceeds the time you specified ({duration}). Would you like to proceed anyway?
+              </p>
+            )}
+
             <div className="flex gap-4">
               <button
-                onClick={() => setShowConfirmModal(false)}
+                onClick={() => setConfirmModal(null)}
                 className="flex-1 bg-surface-container-low text-on-surface font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl transition-colors hover:bg-surface-container"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
@@ -535,8 +554,15 @@ export default function VerifyPage() {
               </button>
               <button
                 onClick={() => {
-                  setShowConfirmModal(false)
-                  callSelect('finalize')
+                  const type = confirmModal.type;
+                  setConfirmModal(null);
+                  if (type === 'empty_days') {
+                    // Proceed to the next stage of validation (duration)
+                    handleFinalize(true);
+                  } else {
+                    // All validations passed, execute
+                    callSelect('finalize');
+                  }
                 }}
                 className="flex-1 bg-primary text-white font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl transition-all hover:bg-primary-tint active:scale-95"
                 style={{ fontFamily: 'var(--font-body)' }}
