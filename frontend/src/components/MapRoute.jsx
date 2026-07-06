@@ -403,7 +403,7 @@ function RouteSummaryPanel({ calculating, routeError, totals, totalWalkMin, tota
           style={{ fontFamily: 'var(--font-body)' }}
         >
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[16px]">directions_walk</span>
+            <span className="material-symbols-outlined text-[16px]">commute</span>
             {totalWalkMin} min travel
           </div>
           {totalActivityMin > 0 && (

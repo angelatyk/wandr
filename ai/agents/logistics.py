@@ -126,7 +126,32 @@ def _build_stops_section(itinerary: ItineraryModel, place_details: dict) -> str:
     return "\n".join(lines)
 
 
-async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> RouteModel:
+async def _get_optimal_directions(prev_place_id: str, stop_place_id: str, transit_preference: str) -> dict:
+    pref = transit_preference.lower()
+    
+    if pref in ("driving", "transit", "walking"):
+        return await get_directions(prev_place_id, stop_place_id, mode=pref)
+    
+    # If mixed or unknown, fetch all 3 and pick the one with the minimum duration > 0.
+    results = await asyncio.gather(
+        get_directions(prev_place_id, stop_place_id, mode="driving"),
+        get_directions(prev_place_id, stop_place_id, mode="transit"),
+        get_directions(prev_place_id, stop_place_id, mode="walking"),
+        return_exceptions=True
+    )
+    
+    valid_results = [r for r in results if not isinstance(r, Exception) and r.get("source") == "api" and r.get("duration_min", 0) > 0]
+    
+    if not valid_results:
+        # Fallback if API fails or returns no valid routes
+        return {"duration_min": 0, "distance_m": 0, "mode": "walking", "source": "none"}
+        
+    # Sort by duration_min to find the fastest mode
+    valid_results.sort(key=lambda x: x["duration_min"])
+    return valid_results[0]
+
+
+async def run_logistics(itinerary: ItineraryModel, place_details: dict, transit_preference: str = "mixed") -> RouteModel:
     """Order stops by day/order, attach map pins, sum walking times between legs."""
     ordered: list[StopModel] = sorted(
         (stop for day in itinerary.days for stop in day.stops),
@@ -153,12 +178,14 @@ async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> Route
 
         travel_min = 0
         travel_source = "none"
+        travel_mode = "none"
         if index > 0:
             prev = ordered[index - 1]
             is_same_day = prev.day == stop.day
             try:
-                leg = await get_directions(prev.place_id, stop.place_id)
+                leg = await _get_optimal_directions(prev.place_id, stop.place_id, transit_preference)
                 travel_min = int(leg.get("duration_min", 0))
+                travel_mode = leg.get("mode", "unknown")
                 if is_same_day:
                     travel_source = "api" if leg.get("source") == "api" else "none"
                 else:
@@ -183,6 +210,7 @@ async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> Route
                 lng=lng,
                 place_source=place.source if place else "unknown",
                 travel_source=travel_source,
+                travel_mode=travel_mode,
             )
         )
 
@@ -308,7 +336,8 @@ class LogisticsAgent(BaseAgent):
         if not optimized:
             logger.info("LogisticsAgent proceeding without LLM optimization due to parsing errors.")
             
-        route = await run_logistics(itinerary, place_details)
+        transit_pref = persona_dict.get("transit_preference", "mixed")
+        route = await run_logistics(itinerary, place_details, transit_preference=transit_pref)
 
         # Sanity check: warn when total travel time implausibly exceeds the trip duration.
         # This catches outlier stops (e.g. a stop in the wrong country) that inflate the sum.

@@ -89,9 +89,14 @@ export default function ItineraryPage() {
 
       let transit = null
       if (routeStop && routeStop.travel_time_from_prev_min > 0) {
+        let icon = 'commute'
+        if (routeStop.travel_mode === 'walking') icon = 'directions_walk'
+        else if (routeStop.travel_mode === 'driving') icon = 'directions_car'
+        else if (routeStop.travel_mode === 'transit') icon = 'directions_bus'
+        
         transit = {
-          icon: 'directions_walk',
-          label: `${routeStop.travel_time_from_prev_min} min walking`,
+          icon,
+          label: `${routeStop.travel_time_from_prev_min} min ${routeStop.travel_mode && routeStop.travel_mode !== 'unknown' ? routeStop.travel_mode : 'travel'}`,
         }
       }
 

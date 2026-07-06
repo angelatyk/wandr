@@ -16,6 +16,7 @@ class RouteStop(BaseModel):
     #   "overnight" — cross-day leg; UI shows this as "N min to tomorrow's first stop"
     #   "none"      — first stop in sequence; no previous stop to measure from
     travel_source: Literal["api", "mock", "overnight", "none"] = "none"
+    travel_mode: Literal["driving", "transit", "walking", "none", "unknown"] = "unknown"
 
 
 class RouteModel(BaseModel):
