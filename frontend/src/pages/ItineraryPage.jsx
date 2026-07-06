@@ -22,6 +22,9 @@ export default function ItineraryPage() {
 
   const handlePinClick = (stopId) => {
     setActiveStopId(stopId)
+    // Direct DOM scroll is appropriate here: the timeline is a plain scrollable
+    // div, not a virtualised list, so getElementById is reliable and avoids
+    // threading a ref callback through every StopCard.
     const el = document.getElementById(`stop-card-${stopId}`)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
@@ -40,6 +43,9 @@ export default function ItineraryPage() {
 
   const destination = persona?.destination || itinerary?.destination || 'Loading...'
 
+  // optionMap: quick lookup of VerifyPage option data (description, duration)
+  // keyed by place_id so we can enrich ItineraryModel stops without a nested
+  // loop on every render.
   const optionMap = useMemo(() => {
     const map = {}
     if (itineraryOptions?.days) {
@@ -52,16 +58,25 @@ export default function ItineraryPage() {
     return map
   }, [itineraryOptions])
 
-  // Prefer photo_url on final itinerary stops; fall back to options from VerifyPage.
-  const imageMap = {}
-  if (itineraryOptions?.days) {
-    for (const day of itineraryOptions.days) {
-      for (const option of day.options) {
-        if (option.photo_url) imageMap[option.place_id] = option.photo_url
+  // imageMap: place_id → photo_url, built from itineraryOptions so that images
+  // appear on stop cards even when the final ItineraryModel stop doesn't carry
+  // a photo_url directly (the photos come from the Places API during the Verify
+  // phase and aren't re-fetched during finalize).
+  const imageMap = useMemo(() => {
+    const map = {}
+    if (itineraryOptions?.days) {
+      for (const day of itineraryOptions.days) {
+        for (const option of day.options) {
+          if (option.photo_url) map[option.place_id] = option.photo_url
+        }
       }
     }
-  }
+    return map
+  }, [itineraryOptions])
 
+  // displayDays: maps the raw ItineraryModel to UI-ready objects, joining stop
+  // data from the backend route (for travel times) with option data (for images
+  // and descriptions) and audio data (for the narration player).
   const displayDays = (itinerary?.days || []).map((day) => ({
     id: `day-${day.day}`,
     label: `Day ${day.day}`,

@@ -58,7 +58,9 @@ export default function RefinePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vibe: reply }),
       })
-      // Reload to re-establish the SSE stream from the beginning of this plan.
+      // Reload the page to re-establish a fresh SSE connection from the start
+      // of this plan's stream. A client-side reconnect would need to replay
+      // all prior events; a full reload is simpler and avoids stale state.
       window.location.reload()
     } catch (err) {
       console.error(err)

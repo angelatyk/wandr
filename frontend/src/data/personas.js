@@ -1,11 +1,18 @@
 /**
- * Mock itinerary data — static placeholder used throughout the UI.
+ * personas.js — static Wandr persona definitions.
  *
- * Shape mirrors what the real Wandr backend will eventually return.
- * When the API is ready, swap this import for a real fetch call.
+ * Each persona shapes the Itinerary and Narrator agents' behaviour:
+ * it influences which stops are suggested, the tone of audio narration,
+ * and the pace/budget defaults applied during profiling.
+ *
+ * These values are also used by the frontend Persona Grid on the home page
+ * and sent to the backend as `persona_type` in the POST /api/plan request.
+ *
+ * Keep this in sync with the `PersonaType` Literal in `ai/models/persona.py`.
+ * The id values must exactly match the backend enum strings.
+ *
+ * @type {{ id: string, label: string, icon: string, description: string }[]}
  */
-
-/** @type {import('./types').Persona[]} */
 export const PERSONAS = [
   {
     id: 'foodie',
@@ -38,5 +45,3 @@ export const PERSONAS = [
     description: 'Neighborhood cafes, parks, and daily rhythms.',
   },
 ]
-
-

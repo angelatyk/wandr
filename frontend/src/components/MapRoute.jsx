@@ -33,6 +33,14 @@ function formatDuration(seconds) {
   return h > 0 ? `${h} h ${m} min` : `${m} min`
 }
 
+/**
+ * Polyline — renders an imperative Google Maps polyline.
+ *
+ * Uses the Maps JS imperative API directly because `@vis.gl/react-google-maps`
+ * does not yet have a stable declarative Polyline primitive that supports all
+ * the stroke options we need. The polyline is attached to the map on mount and
+ * removed on unmount via the cleanup return.
+ */
 function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.9, strokeWeight = 5 }) {
   const map = useMap()
   const [polyline, setPolyline] = useState(null)
@@ -62,6 +70,19 @@ function Polyline({ path, strokeColor = '#0A192F', strokeOpacity = 0.9, strokeWe
   return null
 }
 
+/**
+ * LegacyMarker — renders an imperative Maps JS marker with a numbered label.
+ *
+ * We use the classic `google.maps.Marker` API (not Advanced Markers) because
+ * Advanced Markers require a Map ID to be set on the Map component, which in
+ * turn requires a Cloud Maps Platform billing account. The legacy marker works
+ * with a plain API key. If the project migrates to Advanced Markers later, this
+ * component is the only thing that needs to change.
+ *
+ * An InfoWindow is attached to show the stop name when the marker is active.
+ * The InfoWindow is controlled by the `isActive` prop rather than by click
+ * events so the map panel and sidebar stay in sync.
+ */
 function LegacyMarker({ position, title, labelText, onClick, isActive, fillColor }) {
   const map = useMap()
   const [marker, setMarker] = useState(null)
@@ -127,6 +148,11 @@ function LegacyMarker({ position, title, labelText, onClick, isActive, fillColor
   return null
 }
 
+/**
+ * BoundsController — auto-fits the map viewport to include all stops.
+ * Runs once when the stop list first arrives so the user sees all pins
+ * without needing to manually zoom out.
+ */
 function BoundsController({ stops }) {
   const map = useMap()
   const coreLib = useMapsLibrary('core')
@@ -149,6 +175,11 @@ function BoundsController({ stops }) {
   return null
 }
 
+/**
+ * MapPanController — pans the map to the active stop.
+ * Triggered whenever `activeStopId` changes (e.g. user clicks a stop card
+ * in the sidebar or taps a pin). Does not change the zoom level.
+ */
 function MapPanController({ activeStopId, stops }) {
   const map = useMap()
   const coreLib = useMapsLibrary('core')
@@ -170,6 +201,15 @@ function pathFromDirectionsResult(result) {
   return overview.map((point) => ({ lat: point.lat(), lng: point.lng() }))
 }
 
+/**
+ * PerDayRoadRoutes — requests a road-following route for each day from the
+ * Google Directions API and renders it as a coloured Polyline.
+ *
+ * One Directions request is made per day (not one global request) so that
+ * day-to-day routes don't bleed into each other with straight connector lines.
+ * Up to 25 intermediate waypoints are supported per day (Directions API limit).
+ * Single-stop days are skipped (no route to draw).
+ */
 function PerDayRoadRoutes({ days, travelMode, onStatsChange }) {
   const map = useMap()
   const [routesByDay, setRoutesByDay] = useState({})
@@ -307,6 +347,11 @@ function PerDayRoadRoutes({ days, travelMode, onStatsChange }) {
   )
 }
 
+/**
+ * RouteSummaryPanel — overlay card that shows per-day route stats and totals.
+ * Displayed in the top-right corner of the map. Stats come from the Directions
+ * API responses via `onStatsChange` and from the backend route model via props.
+ */
 function RouteSummaryPanel({ calculating, routeError, totals, totalWalkMin, totalActivityMin }) {
   const formatMins = (totalMinutes) => {
     if (!totalMinutes) return '0 min'
@@ -504,9 +549,23 @@ function MapLayers({
 }
 
 /**
- * MapRoute — one road-following polyline per day (avoids cross-day straight lines).
+ * MapRoute — renders one road-following polyline per day and numbered markers.
  *
- * days: [{ dayNumber, stops: [{ id, name, lat, lng, order }] }]
+ * Wraps the Google Maps JS SDK via `@vis.gl/react-google-maps` (APIProvider).
+ * All inner components (Polyline, LegacyMarker, etc.) must be rendered inside
+ * the APIProvider so they have access to `useMap()` and `useMapsLibrary()`.
+ *
+ * Falls back to a plain error message when VITE_GOOGLE_CLOUD_API_KEY is absent
+ * so local dev without a Maps key doesn't crash the page.
+ *
+ * @param {object}   props
+ * @param {object[]} [props.days]             — [{dayNumber, stops: [{id, name, lat, lng, order}]}]
+ * @param {string}   [props.travelMode]       — 'WALKING' | 'DRIVING' | 'TRANSIT'
+ * @param {function} [props.onPinClick]       — (stopId: string) => void, called when a marker is clicked
+ * @param {string}   [props.activeStopId]     — id of the currently highlighted stop
+ * @param {number}   [props.totalWalkMin]     — total travel time from the backend route model (minutes)
+ * @param {number}   [props.totalActivityMin] — total time at stops (minutes)
+ * @param {string}   [props.destination]      — destination name used for geocoding the initial map center
  */
 export default function MapRoute({
   days = [],
