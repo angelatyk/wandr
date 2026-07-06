@@ -1,3 +1,11 @@
+"""Gemini model fallback helper.
+
+Wraps generate_content with an ordered list of models (primary + fallbacks).
+Falls through to the next model only for transient or quota errors — auth,
+validation, and content-policy errors are re-raised immediately so callers
+aren't silently retried on problems that won't resolve with a different model.
+"""
+
 import asyncio
 import logging
 from typing import Sequence

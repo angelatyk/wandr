@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,7 @@ class TripSummary(BaseModel):
     has_audio: bool = False
     created_at: datetime
     updated_at: datetime
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 class SavedPlanSnapshot(BaseModel):

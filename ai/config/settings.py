@@ -1,7 +1,12 @@
+"""Application settings loaded from environment variables (and .env).
+
+All API key resolution and backwards-compatibility aliasing happens here so
+every other module can import `settings` and read clean, canonical values.
+"""
+
 import os
 
 from pydantic_settings import BaseSettings
-
 
 
 class Settings(BaseSettings):
@@ -45,7 +50,10 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Backwards compatibility for older env naming.
+# ---------------------------------------------------------------------------
+# Backwards-compatible key resolution — normalises older env naming schemes
+# so callers never need to know which env var was actually set.
+# ---------------------------------------------------------------------------
 if settings.google_cloud_api_key in {"", "mock-google-cloud-key", "your-google-cloud-api-key"}:
     if settings.google_cloud_api:
         settings.google_cloud_api_key = settings.google_cloud_api

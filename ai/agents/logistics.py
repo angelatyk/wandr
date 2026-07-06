@@ -1,8 +1,8 @@
+import asyncio
 import json
 import logging
 from collections import defaultdict
 from typing import AsyncGenerator
-import asyncio
 
 from google.adk.agents import BaseAgent
 from google.adk.events import Event
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ai.agents.model_fallback import generate_with_fallback
 from ai.config.settings import settings
+from ai.models.duration import parse_trip_duration
 from ai.models.tool_usage import load_tool_usage, merge_tool_usage, usage_from_route
 from ai.models.route import RouteModel, RouteStop
 from ai.models.trip import ItineraryModel, StopModel
@@ -78,8 +79,10 @@ class DayOrderModel(BaseModel):
     day: int
     ordered_place_ids: list[str]
 
+
 class LogisticsResponseModel(BaseModel):
     days: list[DayOrderModel]
+
 
 def _extract_json(raw: str) -> str | None:
     start = raw.find("{")
@@ -87,6 +90,7 @@ def _extract_json(raw: str) -> str | None:
     if start != -1 and end != -1 and end > start:
         return raw[start : end + 1]
     return None
+
 
 async def _call_model(history: list[types.Content], system_prompt: str) -> str:
     response = await generate_with_fallback(
@@ -101,6 +105,7 @@ async def _call_model(history: list[types.Content], system_prompt: str) -> str:
         call_label="Logistics.generate_content",
     )
     return (response.text or "").strip()
+
 
 def _build_stops_section(itinerary: ItineraryModel, place_details: dict) -> str:
     lines = []
@@ -190,7 +195,6 @@ async def run_logistics(itinerary: ItineraryModel, place_details: dict) -> Route
     return RouteModel(stops=route_stops, total_travel_min=total_travel_min)
 
 
-
 class LogisticsAgent(BaseAgent):
     """Builds ordered route + map pins using an LLM to optimize the sequence."""
 
@@ -216,7 +220,6 @@ class LogisticsAgent(BaseAgent):
         
         # Gather place details for all stops to provide context to LLM
         all_stops = [stop for day in itinerary.days for stop in day.stops]
-        import asyncio
         place_tasks = [get_place_details(s.place_id) for s in all_stops]
         place_results = await asyncio.gather(*place_tasks, return_exceptions=True)
         
@@ -311,7 +314,6 @@ class LogisticsAgent(BaseAgent):
         # This catches outlier stops (e.g. a stop in the wrong country) that inflate the sum.
         duration_raw = persona_dict.get("duration", "")
         if duration_raw:
-            from ai.models.duration import parse_trip_duration
             parsed_duration = parse_trip_duration(duration_raw)
             total_hours = parsed_duration.total_hours or (parsed_duration.day_count * 24)
             trip_minutes = total_hours * 60
