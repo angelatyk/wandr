@@ -90,6 +90,29 @@ export default function ItineraryPage() {
 
   const totalWalk = route?.total_travel_min || 0
 
+  const totalActivityMin = useMemo(() => {
+    if (!itinerary || !itineraryOptions) return 0
+    const optionsByPlaceId = {}
+    for (const day of itineraryOptions.days || []) {
+      for (const opt of day.options || []) {
+        optionsByPlaceId[opt.place_id] = opt.suggested_duration
+      }
+    }
+    let min = 0
+    for (const day of itinerary.days || []) {
+      for (const stop of day.stops || []) {
+        const str = optionsByPlaceId[stop.place_id]
+        if (str) {
+          const hourMatch = str.match(/(\d+(?:\.\d+)?)\s*hour/i)
+          if (hourMatch) min += parseFloat(hourMatch[1]) * 60
+          const minMatch = str.match(/(\d+)\s*min/i)
+          if (minMatch) min += parseInt(minMatch[1], 10)
+        }
+      }
+    }
+    return min
+  }, [itinerary, itineraryOptions])
+
   const mapDays = useMemo(
     () =>
       (itinerary?.days || []).map((day) => ({
@@ -239,6 +262,7 @@ export default function ItineraryPage() {
               onPinClick={handlePinClick}
               activeStopId={activeStopId}
               totalWalkMin={totalWalk}
+              totalActivityMin={totalActivityMin}
               destination={destination}
             />
           </div>

@@ -307,7 +307,16 @@ function PerDayRoadRoutes({ days, travelMode, onStatsChange }) {
   )
 }
 
-function RouteSummaryPanel({ calculating, routeError, totals, totalWalkMin }) {
+function RouteSummaryPanel({ calculating, routeError, totals, totalWalkMin, totalActivityMin }) {
+  const formatMins = (totalMinutes) => {
+    if (!totalMinutes) return '0 min'
+    const h = Math.floor(totalMinutes / 60)
+    const m = Math.floor(totalMinutes % 60)
+    if (h > 0 && m > 0) return `${h} h ${m} min`
+    if (h > 0) return `${h} h`
+    return `${m} min`
+  }
+
   return (
     <div
       className="absolute top-6 right-6 bg-surface/90 backdrop-blur-md rounded-2xl p-4 border border-outline-variant/20 flex flex-col gap-2 max-w-xs z-10"
@@ -317,7 +326,7 @@ function RouteSummaryPanel({ calculating, routeError, totals, totalWalkMin }) {
         className="text-lg font-semibold text-primary leading-tight"
         style={{ fontFamily: 'var(--font-display)' }}
       >
-        Total Route
+        Total Travel Time
       </h3>
 
       {calculating && (
@@ -345,11 +354,25 @@ function RouteSummaryPanel({ calculating, routeError, totals, totalWalkMin }) {
 
       {!calculating && totalWalkMin > 0 && (
         <div
-          className="flex items-center gap-2 text-on-surface-muted text-xs font-semibold uppercase tracking-wider border-t border-outline-variant/20 pt-2 mt-1"
+          className="flex flex-col gap-1 text-on-surface-muted text-xs font-semibold uppercase tracking-wider border-t border-outline-variant/20 pt-2 mt-1"
           style={{ fontFamily: 'var(--font-body)' }}
         >
-          <span className="material-symbols-outlined text-[16px]">directions_walk</span>
-          {totalWalkMin} min walking total
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px]">directions_walk</span>
+            {totalWalkMin} min travel
+          </div>
+          {totalActivityMin > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px]">park</span>
+              {formatMins(totalActivityMin)} at places
+            </div>
+          )}
+          {totalActivityMin > 0 && (
+            <div className="flex items-center gap-2 mt-1 pt-2 border-t border-outline-variant/20 text-primary">
+              <span className="material-symbols-outlined text-[16px]">schedule</span>
+              {formatMins(totalWalkMin + totalActivityMin)} total trip
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -362,6 +385,7 @@ function MapLayers({
   onPinClick,
   activeStopId,
   totalWalkMin,
+  totalActivityMin,
   destination,
 }) {
   const map = useMap()
@@ -473,6 +497,7 @@ function MapLayers({
         routeError={routeStats.routeError}
         totals={routeStats.totals}
         totalWalkMin={totalWalkMin}
+        totalActivityMin={totalActivityMin}
       />
     </>
   )
@@ -489,6 +514,7 @@ export default function MapRoute({
   onPinClick,
   activeStopId = null,
   totalWalkMin = 0,
+  totalActivityMin = 0,
   destination = '',
 }) {
   if (!API_KEY) {
@@ -503,13 +529,14 @@ export default function MapRoute({
 
   return (
     <APIProvider apiKey={API_KEY}>
-      <div className="relative w-full h-full">
+      <div className="relative w-full h-full" style={{ borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
         <MapLayers
           days={days}
           travelMode={travelMode}
           onPinClick={onPinClick}
           activeStopId={activeStopId}
           totalWalkMin={totalWalkMin}
+          totalActivityMin={totalActivityMin}
           destination={destination}
         />
       </div>

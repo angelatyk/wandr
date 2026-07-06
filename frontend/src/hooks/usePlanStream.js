@@ -98,7 +98,13 @@ export function usePlanStream(planId) {
             if (state.persona) setPersona(state.persona)
             if (state.itinerary) setItinerary(state.itinerary)
             if (state.route) setRoute(state.route)
-            if (state.itinerary_options) setItineraryOptions(state.itinerary_options)
+            if (state.itinerary_options) {
+              setItineraryOptions(state.itinerary_options)
+            } else if (state.itinerary_options_confirmed) {
+              setItineraryOptions({
+                days: [{ options: state.itinerary_options_confirmed }]
+              })
+            }
             if (Array.isArray(state.audio_scripts?.scripts) && state.audio_scripts.scripts.length > 0) {
               setStops(state.audio_scripts.scripts)
             }
