@@ -120,8 +120,12 @@ export function usePlanStream(planId) {
 
           } else if (event.type === 'stop_done') {
             setStops((prev) => {
-              const exists = prev.some(s => s.place_id === event.data.place_id)
-              if (exists) return prev
+              const idx = prev.findIndex(s => s.place_id === event.data.place_id)
+              if (idx !== -1) {
+                const merged = [...prev]
+                merged[idx] = { ...merged[idx], ...event.data }
+                return merged
+              }
               return [...prev, event.data]
             })
 
