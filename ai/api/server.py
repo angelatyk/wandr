@@ -234,16 +234,23 @@ def _rate_limit_error_message(error: Exception) -> str:
 
 
 async def _clear_pipeline_error(plan_id: str) -> None:
-    """Remove a stale error marker before a new pipeline run."""
+    """Remove stale terminal-state markers before a new pipeline run."""
     session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
-    if session is None or session.state.get("pipeline_error") is None:
+    if session is None:
+        return
+    to_clear = {
+        k: None
+        for k in ("pipeline_error", "pipeline_complete")
+        if session.state.get(k) is not None
+    }
+    if not to_clear:
         return
 
     await session_service.append_event(
         session=session,
         event=_ADKEvent(
             author="system",
-            actions=_ADKEventActions(state_delta={"pipeline_error": None}),
+            actions=_ADKEventActions(state_delta=to_clear),
         ),
     )
 
@@ -447,6 +454,16 @@ async def run_pipeline(
             await _snapshot_session_state(plan_id)
             return
 
+        # Persist completion flag to state so a reconnecting SSE client can replay
+        # the terminal event even after a server restart clears the in-memory queue.
+        if current_session is not None:
+            await session_service.append_event(
+                session=current_session,
+                event=_ADKEvent(
+                    author="system",
+                    actions=_ADKEventActions(state_delta={"pipeline_complete": True}),
+                ),
+            )
         progress = 100
         await _snapshot_session_state(plan_id)
         await queue.put(PipelineEvent(
@@ -505,7 +522,8 @@ async def reply_plan(plan_id: str, request: TripRequest, http_request: Request):
     current_session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
     if current_session is not None:
         stale_keys = ("itinerary", "route", "audio_scripts", "itinerary_action",
-                      "itinerary_options", "itinerary_options_confirmed", "itinerary_refinement_text")
+                      "itinerary_options", "itinerary_options_confirmed", "itinerary_refinement_text",
+                      "pipeline_complete")
         stale_state = {k: None for k in stale_keys if current_session.state.get(k) is not None}
         if stale_state:
             await session_service.append_event(
@@ -633,6 +651,7 @@ async def select_places(plan_id: str, body: SelectRequest, http_request: Request
                 "itinerary": None,
                 "route": None,
                 "audio_scripts": None,
+                "pipeline_complete": None,
             }
         ),
     )
@@ -839,13 +858,28 @@ async def stream_plan(plan_id: str):
                 return
             if status == "awaiting_selection":
                 return
+            # pipeline_complete is set when run_pipeline emits a 'complete' event.
+            # If the in-memory queue was cleared by a server restart, this flag lets
+            # us replay the terminal event from persisted state without the queue.
+            if state.get("pipeline_complete"):
+                yield f"data: {json.dumps({'type': 'complete', 'data': _public_complete_payload(plan_id, state), 'progress': 100})}\n\n"
+                return
         except Exception:
             pass
 
+        # Hard deadline: if no terminal event arrives within 10 minutes, emit an error
+        # so the frontend is never stuck indefinitely (e.g. if the pipeline silently died).
+        _PIPELINE_HARD_TIMEOUT = 10 * 60  # seconds
+        deadline = asyncio.get_event_loop().time() + _PIPELINE_HARD_TIMEOUT
         while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                logger.warning("SSE queue drain timed out for plan %s — pipeline may have died silently.", plan_id)
+                yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'The pipeline took too long to respond. Please retry.'}, 'progress': 100})}\n\n"
+                break
             try:
                 event = await asyncio.wait_for(
-                    queue.get(), timeout=_KEEPALIVE_INTERVAL_SECONDS
+                    queue.get(), timeout=min(_KEEPALIVE_INTERVAL_SECONDS, remaining)
                 )
             except asyncio.TimeoutError:
                 # SSE comment — browsers ignore this; it resets proxy idle timers
