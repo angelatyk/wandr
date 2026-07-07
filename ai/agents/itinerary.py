@@ -135,7 +135,11 @@ def _build_refinement_section(text: str | None) -> str:
     """Format the user's refinement request."""
     if not text:
         return "No refinement requested — generate options normally."
-    return f'The user wants to refine the itinerary: "{text}". Incorporate this into your options.'
+    return (
+        f'The user wants to refine the itinerary: "{text}". Incorporate this into your options.\n\n'
+        'IMPORTANT: If the user\'s Refinement Request is completely unrelated to traveling, exploring, or planning '
+        '(e.g., asking for a recipe, coding help, or random facts), you MUST output exactly: DENY_NON_TRAVEL'
+    )
 
 
 def _build_candidate_section(candidates: list[PlaceSearchResult]) -> str:
@@ -816,6 +820,10 @@ class ItineraryAgent(BaseAgent):
         logger.info("Gemini response received (length=%d chars).", len(raw))
         logger.debug("Raw response:\n%s", raw)
 
+        if raw == "DENY_NON_TRAVEL":
+            logger.warning("ItineraryAgent denied non-travel refinement request")
+            raise ValueError("DENY_NON_TRAVEL")
+
         json_str = _extract_json(raw)
         if json_str is None:
             # ── Retry: model returned prose — ask again, explicitly ──────────
@@ -838,6 +846,9 @@ class ItineraryAgent(BaseAgent):
                 ),
             ]
             raw = await _call_model(retry_history, system_prompt)
+            if raw == "DENY_NON_TRAVEL":
+                logger.warning("ItineraryAgent denied non-travel refinement request on retry")
+                raise ValueError("DENY_NON_TRAVEL")
             json_str = _extract_json(raw)
             logger.info(
                 "Retry response received (length=%d chars). JSON found: %s",

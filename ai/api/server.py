@@ -220,6 +220,8 @@ def _ensure_plan_queue(plan_id: str) -> asyncio.Queue:
 
 def _rate_limit_error_message(error: Exception) -> str:
     text = str(error).lower()
+    if "deny_non_travel" in text:
+        return "Please enter a request related to travel or exploration."
     if any(token in text for token in ("429", "resource_exhausted", "rate limit", "quota")):
         return (
             "Wandr hit a temporary API quota/rate limit while planning your trip. "

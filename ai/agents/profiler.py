@@ -33,7 +33,7 @@ You MUST have ALL THREE of these before producing a persona:
   or landmark (e.g. "under the CN tower", "at the airport"), capture it here.
 
 ## Edge Cases & Clarifications
-- If the user's message is completely unrelated to travel, exploring, or planning a trip (e.g. asking for a recipe, coding help, or random facts), refuse politely and steer them back to travel planning. Do NOT extract fields.
+- If the user's message is completely unrelated to travel, exploring, or planning a trip (e.g. asking for a recipe, coding help, or random facts), you MUST output exactly: DENY_NON_TRAVEL
 - If the user provides a current_location but NO explicit destination, infer the
   destination to be the city/area of the current location (e.g., "I'm under the CN tower" -> destination = "Toronto").
 - If the user provides a short duration (e.g. "2 hours") for a destination that is
@@ -342,6 +342,10 @@ class ProfilerAgent(BaseAgent):
 
         raw = (response.text or "").strip()
         logger.debug("Profiler raw LLM output: %s", raw)
+
+        if raw == "DENY_NON_TRAVEL":
+            logger.warning("Profiler denied non-travel request")
+            raise ValueError("DENY_NON_TRAVEL")
 
         # Try to interpret the response as a PersonaModel JSON.
         persona = _persona_from_json_or_none(raw)
