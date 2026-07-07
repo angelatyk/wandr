@@ -128,11 +128,9 @@ def _normalize_stop_audio_url(plan_id: str, place_id: str, audio_url: str) -> st
     """Always expose query-param URLs — path-style place IDs break routing."""
     if not audio_url or not place_id:
         return audio_url
-    if audio_url.startswith("data:audio/") or audio_url.startswith("http://") or audio_url.startswith("https://"):
+    if audio_url.startswith("data:audio/"):
         return audio_url
-    if audio_url.startswith("/api/plan/"):
-        return _stop_audio_api_url(plan_id, place_id)
-    return audio_url
+    return _stop_audio_api_url(plan_id, place_id)
 
 
 def _public_stop_payload(plan_id: str, script: dict) -> dict:
@@ -690,8 +688,8 @@ async def places_autocomplete(
     return {"suggestions": suggestions}
 
 
-async def _regenerate_stop_audio(plan_id: str, place_id: str, state: dict) -> bytes | None:
-    """Re-synthesize MP3 when the script exists but the file was never saved."""
+async def _regenerate_stop_audio(plan_id: str, place_id: str, state: dict) -> str | None:
+    """Re-synthesize MP3 when the script exists but the file was never saved or URL expired."""
     script = _find_script_in_state(state, place_id)
     if script is None:
         return None
@@ -707,14 +705,14 @@ async def _regenerate_stop_audio(plan_id: str, place_id: str, state: dict) -> by
     try:
         persona = PersonaModel.model_validate(persona_dict)
         voice_style = persona_voice_style(persona)
-        await generate_audio(
+        new_url = await generate_audio(
             text,
             voice_style,
             plan_id=plan_id,
             place_id=place_id,
         )
         logger.info("On-demand TTS regenerated audio for plan=%s place=%s", plan_id, place_id)
-        return load_plan_audio(plan_id, place_id)
+        return new_url
     except Exception as exc:
         logger.warning(
             "On-demand TTS regen failed for plan=%s place=%s: %s",
@@ -757,16 +755,79 @@ async def _stream_stop_audio_bytes(plan_id: str, place_id: str) -> Response:
         )
 
     if stored_url.startswith("http://") or stored_url.startswith("https://"):
-        return RedirectResponse(stored_url, status_code=302)
+        from urllib.parse import urlparse, parse_qs
+        import datetime
+        
+        parsed = urlparse(stored_url)
+        qs = parse_qs(parsed.query)
+        is_expired = False
+        
+        if "X-Goog-Date" in qs and "X-Goog-Expires" in qs:
+            try:
+                date_str = qs["X-Goog-Date"][0]
+                expires_sec = int(qs["X-Goog-Expires"][0])
+                goog_date = datetime.datetime.strptime(date_str, "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
+                expires_at = goog_date + datetime.timedelta(seconds=expires_sec)
+                
+                # Add a 5 minute buffer before expiration
+                if datetime.datetime.now(datetime.timezone.utc) >= expires_at - datetime.timedelta(minutes=5):
+                    is_expired = True
+            except Exception:
+                pass
+                
+        if not is_expired:
+            return RedirectResponse(stored_url, status_code=302)
+        else:
+            logger.info("Stored GCS URL expired for plan=%s place=%s, falling through to regenerate.", plan_id, place_id)
 
-    # API URL saved but file missing — try one on-demand TTS pass.
-    audio_bytes = await _regenerate_stop_audio(plan_id, place_id, state)
-    if audio_bytes:
-        return Response(
-            content=audio_bytes,
-            media_type="audio/mpeg",
-            headers={"Cache-Control": "private, max-age=86400"},
-        )
+    # API URL saved but file missing or URL expired — try one on-demand TTS pass.
+    new_url = await _regenerate_stop_audio(plan_id, place_id, state)
+    if new_url:
+        # Update the session with the newly generated URL so we don't keep regenerating
+        session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
+        if session:
+            audio_scripts = session.state.get("audio_scripts")
+            if audio_scripts and "scripts" in audio_scripts:
+                new_scripts = list(audio_scripts["scripts"])
+                for s in new_scripts:
+                    if s.get("place_id") == place_id:
+                        if s.get("audio_url") != new_url:
+                            s_copy = dict(s)
+                            s_copy["audio_url"] = new_url
+                            s_copy["audio_source"] = "stored"
+                            index = new_scripts.index(s)
+                            new_scripts[index] = s_copy
+                        break
+                await session_service.append_event(
+                    session=session,
+                    event=_ADKEvent(
+                        author="system",
+                        actions=_ADKEventActions(state_delta={"audio_scripts": {"scripts": new_scripts}}),
+                    ),
+                )
+                await _snapshot_session_state(plan_id)
+        
+        if new_url.startswith("http://") or new_url.startswith("https://"):
+            return RedirectResponse(new_url, status_code=302)
+        elif new_url.startswith("data:audio/"):
+            try:
+                _, encoded = new_url.split(",", 1)
+                audio_bytes_new = base64.b64decode(encoded)
+                return Response(
+                    content=audio_bytes_new,
+                    media_type="audio/mpeg",
+                    headers={"Cache-Control": "private, max-age=3600"},
+                )
+            except (ValueError, base64.binascii.Error) as exc:
+                raise HTTPException(status_code=500, detail="Regenerated inline audio is corrupt") from exc
+        else:
+            audio_bytes_new = load_plan_audio(plan_id, place_id)
+            if audio_bytes_new:
+                return Response(
+                    content=audio_bytes_new,
+                    media_type="audio/mpeg",
+                    headers={"Cache-Control": "private, max-age=86400"},
+                )
 
     if not stored_url:
         raise HTTPException(status_code=404, detail="No audio generated for this stop")

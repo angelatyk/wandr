@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     ggogle_direction_api_key: str | None = None
     google_tts_api_key: str | None = None
     gcs_bucket_name: str = "mock-bucket"
-    gcs_signed_url_ttl_seconds: int = 3600
+    gcs_signed_url_ttl_seconds: int = 604800
     # When true, always return inline data URLs (best for local dev without GCS).
     tts_prefer_inline: bool = True
     model_name: str = "gemini-2.5-flash"
