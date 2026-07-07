@@ -143,8 +143,25 @@ export function usePlanStream(planId) {
                 days: [{ options: state.itinerary_options_confirmed }]
               })
             }
+            // Merge audio scripts from the complete payload into existing stops.
+            // We do NOT replace outright — stop_done events may have already
+            // populated stops correctly. We only fill in gaps (stops not yet
+            // received via stop_done) or patch in audio_url if it was missing.
             if (Array.isArray(state.audio_scripts?.scripts) && state.audio_scripts.scripts.length > 0) {
-              setStops(state.audio_scripts.scripts)
+              setStops((prev) => {
+                const merged = [...prev]
+                for (const script of state.audio_scripts.scripts) {
+                  const idx = merged.findIndex(s => s.place_id === script.place_id)
+                  if (idx === -1) {
+                    // Stop not yet received via stop_done — add it
+                    merged.push(script)
+                  } else if (!merged[idx].audio_url && script.audio_url) {
+                    // Stop arrived via stop_done but without audio — patch it in
+                    merged[idx] = { ...merged[idx], ...script }
+                  }
+                }
+                return merged
+              })
             }
             closeStream()
 
