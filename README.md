@@ -4,7 +4,7 @@
 
 _Built for the Kaggle AI Agents Capstone | Concierge Agents Track_
 
-🚀 **Live Application**: [wandr-teamasquare.vercel.app](https://wandr-teamasquare.vercel.app)
+🚀 **Live Application**: [wandr-teamasquared.vercel.app](https://wandr-teamasquared.vercel.app)
 
 ## 📖 Overview
 
