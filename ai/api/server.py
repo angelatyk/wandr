@@ -67,7 +67,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pipeline_queues: dict[str, asyncio.Queue] = {}
+pipeline_queues: dict[str, list[asyncio.Queue]] = {}
+
+async def _broadcast_event(plan_id: str, event_dump: dict) -> None:
+    for q in pipeline_queues.get(plan_id, []):
+        await q.put(event_dump)
 session_service = InMemorySessionService()
 
 
@@ -212,10 +216,6 @@ async def _ensure_plan_session(plan_id: str) -> dict:
     return {} if refreshed is None else refreshed.state
 
 
-def _ensure_plan_queue(plan_id: str) -> asyncio.Queue:
-    if plan_id not in pipeline_queues:
-        pipeline_queues[plan_id] = asyncio.Queue()
-    return pipeline_queues[plan_id]
 
 
 def _rate_limit_error_message(error: Exception) -> str:
@@ -275,7 +275,6 @@ async def _persist_pipeline_error(plan_id: str, message: str) -> None:
 async def run_pipeline(
     plan_id: str,
     request: TripRequest,
-    queue: asyncio.Queue,
     *,
     concurrency_key: str | None = None,
 ):
@@ -346,7 +345,7 @@ async def run_pipeline(
                     if "profiler_done" not in emitted_phases:
                         progress = 30
                         logger.info("Profiler resolved persona for plan %s.", plan_id)
-                        await queue.put(PipelineEvent(
+                        await _broadcast_event(plan_id, PipelineEvent(
                             type="profiler_done",
                             data=persona_payload,
                             progress=progress
@@ -361,7 +360,7 @@ async def run_pipeline(
                         plan_id,
                         text,
                     )
-                    await queue.put(PipelineEvent(
+                    await _broadcast_event(plan_id, PipelineEvent(
                         type="profiler_clarification",
                         data={"message": text or "Where are you heading, and how much time do you have?"},
                         progress=progress
@@ -379,7 +378,7 @@ async def run_pipeline(
                         "Itinerary options ready for plan %s — broadcasting itinerary_options event.",
                         plan_id,
                     )
-                    await queue.put(PipelineEvent(
+                    await _broadcast_event(plan_id, PipelineEvent(
                         type="itinerary_options",
                         data=itinerary_options_payload,
                         progress=progress
@@ -400,7 +399,7 @@ async def run_pipeline(
                         "Itinerary finalised for plan %s — broadcasting itinerary_done event.",
                         plan_id,
                     )
-                    await queue.put(PipelineEvent(
+                    await _broadcast_event(plan_id, PipelineEvent(
                         type="itinerary_done",
                         data=_public_itinerary_payload(effective_state),
                         progress=progress
@@ -422,7 +421,7 @@ async def run_pipeline(
                             plan_id,
                         )
                         for script in audio_scripts_payload["scripts"]:
-                            await queue.put(PipelineEvent(
+                            await _broadcast_event(plan_id, PipelineEvent(
                                 type="stop_done",
                                 data=_public_stop_payload(plan_id, script),
                                 progress=progress
@@ -436,7 +435,7 @@ async def run_pipeline(
                     if "logistics_done" not in emitted_phases:
                         progress = 90
                         logger.info("Logistics route ready for plan %s.", plan_id)
-                        await queue.put(PipelineEvent(
+                        await _broadcast_event(plan_id, PipelineEvent(
                             type="logistics_done",
                             data=route_payload,
                             progress=progress
@@ -468,7 +467,7 @@ async def run_pipeline(
             )
         progress = 100
         await _snapshot_session_state(plan_id)
-        await queue.put(PipelineEvent(
+        await _broadcast_event(plan_id, PipelineEvent(
             type="complete",
             data=_public_complete_payload(plan_id, final_state),
             progress=progress
@@ -480,7 +479,7 @@ async def run_pipeline(
         logger.info("Pipeline user-facing error for plan %s: %s", plan_id, user_message)
         await _persist_pipeline_error(plan_id, user_message)
         await _snapshot_session_state(plan_id)
-        await queue.put(PipelineEvent(
+        await _broadcast_event(plan_id, PipelineEvent(
             type="error",
             data={"message": user_message},
             progress=100
@@ -497,11 +496,9 @@ async def create_plan(request: TripRequest, http_request: Request):
     _acquire_pipeline_slot(client_key)
     try:
         plan_id = str(uuid4())
-        queue = asyncio.Queue()
-        pipeline_queues[plan_id] = queue
         save_plan_snapshot(plan_id, {"trip_request": request.model_dump(exclude_none=True)})
         asyncio.create_task(
-            run_pipeline(plan_id, request, queue, concurrency_key=client_key)
+            run_pipeline(plan_id, request, concurrency_key=client_key)
         )
     except Exception:
         pipeline_limiter.release(client_key)
@@ -513,10 +510,6 @@ async def create_plan(request: TripRequest, http_request: Request):
 async def reply_plan(plan_id: str, request: TripRequest, http_request: Request):
     """Resume the pipeline after a profiler clarification answer."""
     _plan_rate_limit(http_request)
-    if plan_id not in pipeline_queues:
-        pipeline_queues[plan_id] = asyncio.Queue()
-    queue = pipeline_queues[plan_id]
-
     # Clear any stale finalised state so agents don't skip themselves when
     # the user is replying with a new clarification or starting a fresh run.
     # Without this, ItineraryAgent sees a non-null 'itinerary' and returns early,
@@ -544,7 +537,7 @@ async def reply_plan(plan_id: str, request: TripRequest, http_request: Request):
     _acquire_pipeline_slot(client_key)
     try:
         asyncio.create_task(
-            run_pipeline(plan_id, request, queue, concurrency_key=client_key)
+            run_pipeline(plan_id, request, concurrency_key=client_key)
         )
     except Exception:
         pipeline_limiter.release(client_key)
@@ -578,8 +571,8 @@ async def select_places(plan_id: str, body: SelectRequest, http_request: Request
     # Always create a fresh queue for the new pipeline run so no stale events
     # (e.g. the 'complete' event from the previous itinerary_options run) leak
     # into the new SSE stream and cause it to close prematurely.
-    queue = asyncio.Queue()
-    pipeline_queues[plan_id] = queue
+    if plan_id in pipeline_queues:
+        pipeline_queues[plan_id].clear()
 
     # Pull the current session so we can update state before re-running.
     # If the in-memory session is gone (e.g. server restarted), restore it
@@ -679,7 +672,7 @@ async def select_places(plan_id: str, body: SelectRequest, http_request: Request
     _acquire_pipeline_slot(client_key)
     try:
         asyncio.create_task(
-            run_pipeline(plan_id, run_body, queue, concurrency_key=client_key)
+            run_pipeline(plan_id, run_body, concurrency_key=client_key)
         )
     except Exception:
         pipeline_limiter.release(client_key)
@@ -832,7 +825,10 @@ async def stream_plan(plan_id: str):
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'Plan not found'}, 'progress': 100})}\n\n"
             return
 
-        queue = _ensure_plan_queue(plan_id)
+        queue = asyncio.Queue()
+        if plan_id not in pipeline_queues:
+            pipeline_queues[plan_id] = []
+        pipeline_queues[plan_id].append(queue)
 
         # Replay current state so reconnecting clients catch up immediately.
         try:
@@ -869,27 +865,33 @@ async def stream_plan(plan_id: str):
         except Exception:
             pass
 
-        # Hard deadline: if no terminal event arrives within 10 minutes, emit an error
-        # so the frontend is never stuck indefinitely (e.g. if the pipeline silently died).
-        _PIPELINE_HARD_TIMEOUT = 10 * 60  # seconds
-        deadline = asyncio.get_event_loop().time() + _PIPELINE_HARD_TIMEOUT
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                logger.warning("SSE queue drain timed out for plan %s — pipeline may have died silently.", plan_id)
-                yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'The pipeline took too long to respond. Please retry.'}, 'progress': 100})}\n\n"
-                break
-            try:
-                event = await asyncio.wait_for(
-                    queue.get(), timeout=min(_KEEPALIVE_INTERVAL_SECONDS, remaining)
-                )
-            except asyncio.TimeoutError:
-                # SSE comment — browsers ignore this; it resets proxy idle timers
-                yield ": keepalive\n\n"
-                continue
-            yield f"data: {json.dumps(event)}\n\n"
-            if event["type"] in ("complete", "error", "profiler_clarification", "itinerary_options"):
-                break
+        try:
+            # Hard deadline: if no terminal event arrives within 10 minutes, emit an error
+            # so the frontend is never stuck indefinitely (e.g. if the pipeline silently died).
+            _PIPELINE_HARD_TIMEOUT = 10 * 60  # seconds
+            deadline = asyncio.get_event_loop().time() + _PIPELINE_HARD_TIMEOUT
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    logger.warning("SSE queue drain timed out for plan %s — pipeline may have died silently.", plan_id)
+                    yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'The pipeline took too long to respond. Please retry.'}, 'progress': 100})}\n\n"
+                    break
+                try:
+                    event = await asyncio.wait_for(
+                        queue.get(), timeout=min(_KEEPALIVE_INTERVAL_SECONDS, remaining)
+                    )
+                except asyncio.TimeoutError:
+                    # SSE comment — browsers ignore this; it resets proxy idle timers
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {json.dumps(event)}\n\n"
+                if event["type"] in ("complete", "error", "profiler_clarification", "itinerary_options"):
+                    break
+        finally:
+            if plan_id in pipeline_queues and queue in pipeline_queues[plan_id]:
+                pipeline_queues[plan_id].remove(queue)
+                if not pipeline_queues[plan_id]:
+                    del pipeline_queues[plan_id]
 
     return StreamingResponse(
         event_generator(),
