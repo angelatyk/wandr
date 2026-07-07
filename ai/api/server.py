@@ -50,6 +50,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 APP_NAME = "wandr"
 
+# SSE keepalive: yield a comment every N seconds so Cloud Run / Vercel's nginx
+# proxy doesn't kill the connection during long Gemini inference gaps.
+# Must be strictly less than the smallest proxy idle timeout (typically 60 s).
+_KEEPALIVE_INTERVAL_SECONDS = 20
+
 _cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 
 app = FastAPI(title="Wandr API")
@@ -64,6 +69,12 @@ app.add_middleware(
 
 pipeline_queues: dict[str, asyncio.Queue] = {}
 session_service = InMemorySessionService()
+
+
+@app.get("/health")
+async def health():
+    """Liveness probe — also pinged by Cloud Scheduler every 5 min to keep the container warm."""
+    return {"status": "ok"}
 
 
 def _plan_rate_limit(request: Request) -> None:
@@ -832,7 +843,14 @@ async def stream_plan(plan_id: str):
             pass
 
         while True:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(
+                    queue.get(), timeout=_KEEPALIVE_INTERVAL_SECONDS
+                )
+            except asyncio.TimeoutError:
+                # SSE comment — browsers ignore this; it resets proxy idle timers
+                yield ": keepalive\n\n"
+                continue
             yield f"data: {json.dumps(event)}\n\n"
             if event["type"] in ("complete", "error", "profiler_clarification", "itinerary_options"):
                 break

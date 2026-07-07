@@ -44,10 +44,25 @@ export function usePlanStream(planId) {
   const reconnectRef = useRef(null)
   const gracefulCloseRef = useRef(false)
 
+  // statusRef mirrors the status state so onerror can read the current value
+  // without a stale closure (same reason as gracefulCloseRef).
+  const statusRef = useRef('initializing')
+
+  // Silent retry state — judges never see a 'reconnecting' status.
+  const MAX_RETRIES = 3
+  const retryCountRef = useRef(0)
+  const retryTimerRef = useRef(null)
+
   useEffect(() => {
     if (!planId) return
 
     let es = null
+
+    // Keep statusRef in sync so onerror can read the live value without a stale closure.
+    const updateStatus = (next) => {
+      statusRef.current = next
+      setStatus(next)
+    }
 
     const closeStream = () => {
       gracefulCloseRef.current = true
@@ -68,18 +83,20 @@ export function usePlanStream(planId) {
       es = new EventSource(`/api/plan/${planId}/stream`)
 
       es.onmessage = (e) => {
+        // First successful message — reset the retry counter
+        retryCountRef.current = 0
         try {
           const event = JSON.parse(e.data)
           setProgress(event.progress || 0)
 
           if (event.type === 'profiler_clarification') {
-            setStatus('needs_clarification')
+            updateStatus('needs_clarification')
             setClarification(event.data.message)
             setErrorMessage(null)
             closeStream()
 
           } else if (event.type === 'profiler_done') {
-            setStatus('planning')
+            updateStatus('planning')
             setPersona(event.data)
             setErrorMessage(null)
 
@@ -87,18 +104,18 @@ export function usePlanStream(planId) {
             // Options are ready — show VerifyPage, stream pauses here
             const days = event.data?.days
             if (!Array.isArray(days) || days.length === 0) {
-              setStatus('error')
+              updateStatus('error')
               setErrorMessage('Itinerary options arrived without any places. Please retry.')
               closeStream()
               return
             }
-            setStatus('awaiting_selection')
+            updateStatus('awaiting_selection')
             setItineraryOptions(event.data)
             setErrorMessage(null)
             closeStream()
 
           } else if (event.type === 'itinerary_done') {
-            setStatus('finalised')
+            updateStatus('finalised')
             setItinerary(event.data)
 
           } else if (event.type === 'stop_done') {
@@ -109,11 +126,11 @@ export function usePlanStream(planId) {
             })
 
           } else if (event.type === 'logistics_done') {
-            setStatus('routing')
+            updateStatus('routing')
             setRoute(event.data)
 
           } else if (event.type === 'complete') {
-            setStatus('complete')
+            updateStatus('complete')
             setErrorMessage(null)
             const state = event.data || {}
             if (state.persona) setPersona(state.persona)
@@ -132,7 +149,7 @@ export function usePlanStream(planId) {
             closeStream()
 
           } else if (event.type === 'error') {
-            setStatus('error')
+            updateStatus('error')
             setErrorMessage(event.data?.message || 'The trip pipeline failed. Please try again.')
             closeStream()
           }
@@ -142,13 +159,27 @@ export function usePlanStream(planId) {
       }
 
       es.onerror = () => {
-        // EventSource fires onerror when the server closes after a normal pause
-        // (e.g. itinerary_options) — do not treat that as a failure.
+        // Intentional close (e.g. itinerary_options pause, complete) — not a failure.
         if (gracefulCloseRef.current) return
-        console.error('SSE connection lost unexpectedly')
-        setStatus('error')
-        setErrorMessage('Connection lost while streaming trip updates. Please retry.')
-        closeStream()
+
+        // Terminal states that close intentionally — don't retry.
+        const terminalStatuses = ['complete', 'awaiting_selection']
+        if (terminalStatuses.includes(statusRef.current)) return
+
+        if (retryCountRef.current < MAX_RETRIES) {
+          const attempt = retryCountRef.current + 1
+          const delay = Math.pow(2, retryCountRef.current) * 1000 // 1s → 2s → 4s
+          retryCountRef.current = attempt
+          console.warn(`[wandr] SSE dropped — silent retry ${attempt}/${MAX_RETRIES} in ${delay}ms`)
+          if (es) es.close()
+          // No status change — the user sees nothing during a retry.
+          retryTimerRef.current = setTimeout(() => connect(), delay)
+        } else {
+          console.error('[wandr] SSE connection lost after all retries')
+          updateStatus('error')
+          setErrorMessage('Connection lost while streaming trip updates. Please retry.')
+          closeStream()
+        }
       }
     }
 
@@ -158,6 +189,7 @@ export function usePlanStream(planId) {
 
     return () => {
       gracefulCloseRef.current = true
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
       if (es) es.close()
     }
   }, [planId])
