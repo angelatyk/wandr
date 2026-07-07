@@ -77,7 +77,13 @@ export default function ItineraryPage() {
   // displayDays: maps the raw ItineraryModel to UI-ready objects, joining stop
   // data from the backend route (for travel times) with option data (for images
   // and descriptions) and audio data (for the narration player).
-  const displayDays = (itinerary?.days || []).map((day) => ({
+  //
+  // Must be memoized with audioStops as a dependency — without useMemo this is
+  // a plain inline .map() that only re-runs when React happens to re-render for
+  // another reason. New stop_done SSE events update audioStops in state (which
+  // triggers a render), but if the stream closes before all audio is ready the
+  // cards would freeze showing 'audio pending' until the next unrelated render.
+  const displayDays = useMemo(() => (itinerary?.days || []).map((day) => ({
     id: `day-${day.day}`,
     label: `Day ${day.day}`,
     stops: day.stops.map((stop, idx) => {
@@ -120,7 +126,7 @@ export default function ItineraryPage() {
         ),
       }
     }),
-  }))
+  })), [itinerary, audioStops, route, optionMap, imageMap])
 
   const totalWalk = route?.total_travel_min || 0
 
