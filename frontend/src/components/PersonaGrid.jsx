@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 /**
- * PersonaCard — a single selectable explorer persona.
+ * PersonaCard — a single selectable explorer persona tile.
  *
- * When selected it gains a gold border and scales up slightly,
- * per the Stitch design spec.
+ * When selected, the card gains a gold border, scales up slightly, and shows
+ * a "Selected" indicator — matching the Stitch design spec.
+ *
+ * @param {{ persona: object, selected: boolean, onClick: function }} props
  */
 function PersonaCard({ persona, selected, onClick }) {
   return (
@@ -70,8 +72,18 @@ function PersonaCard({ persona, selected, onClick }) {
 }
 
 /**
- * PersonaGrid — renders all persona cards and tracks selection.
- * Navigates to /refine on CTA click.
+ * PersonaGrid — renders the full persona card grid and tracks selection.
+ *
+ * When a persona is selected a "Continue" CTA appears below the grid.
+ * The CTA calls `onContinue`, which in practice is the same handler as
+ * the hero form submit (handleQuickWander), so both paths converge.
+ *
+ * @param {object}   props
+ * @param {object[]} props.personas          — array of persona definitions from personas.js
+ * @param {string|null} props.selectedPersona — id of the currently selected persona, or null
+ * @param {function} props.onSelectPersona   — (id: string) => void
+ * @param {function} props.onContinue        — called when the user clicks "Continue"
+ * @param {boolean}  props.isLoading         — disables CTA while the API call is in flight
  */
 export default function PersonaGrid({ personas, selectedPersona, onSelectPersona, onContinue, isLoading }) {
   return (

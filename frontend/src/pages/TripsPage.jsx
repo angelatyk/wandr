@@ -8,6 +8,14 @@ import {
   useSavedTrips,
 } from '../hooks/useSavedTrips'
 
+/**
+ * StatusBadge — coloured pill showing the trip's current pipeline phase.
+ *
+ * Colour is determined by status key; unknown statuses fall back to the
+ * 'started' (neutral grey) style so the badge always renders.
+ *
+ * @param {{ status: string }} props
+ */
 function StatusBadge({ status }) {
   const styles = {
     complete: 'bg-secondary/15 text-secondary',
@@ -30,6 +38,15 @@ function StatusBadge({ status }) {
   )
 }
 
+/**
+ * TripCard — summary card for a single saved trip.
+ *
+ * Displays destination, duration, persona, status, and quick metadata
+ * (stop count, audio readiness, last-updated date). Links to the correct
+ * page for the trip's current status via `tripHref`.
+ *
+ * @param {{ trip: object }} props — trip record from the My Trips API
+ */
 function TripCard({ trip }) {
   const href = tripHref(trip)
   const destination = tripDestination(trip)

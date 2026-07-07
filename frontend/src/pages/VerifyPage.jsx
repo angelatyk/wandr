@@ -1,33 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FREE_TEXT_MAX } from '../constants/inputLimits'
 import { usePlanStream } from '../hooks/usePlanStream'
-
-function parseDurationString(str) {
-  if (!str) return 0;
-  const s = str.toLowerCase();
-  const num = parseFloat(s.match(/(\d+(?:\.\d+)?)/)?.[1] || '0');
-  if (s.includes('hour') || s.includes('hr')) return num;
-  if (s.includes('day')) return num * 24;
-  if (s.includes('week')) return num * 24 * 7;
-  return num;
-}
-
-function parseSuggestedDuration(str) {
-  if (!str) return 1.0;
-  const s = str.toLowerCase();
-  let multiplier = 1.0;
-  if (s.includes('min')) multiplier = 1 / 60;
-  
-  const matches = s.match(/(\d+(?:\.\d+)?)/g);
-  if (matches) {
-    if (matches.length > 1) {
-      return ((parseFloat(matches[0]) + parseFloat(matches[1])) / 2) * multiplier;
-    }
-    return parseFloat(matches[0]) * multiplier;
-  }
-  return 1.0;
-}
+import { parseDurationString, parseSuggestedDuration } from '../utils/duration'
+import SelectedPlacesSummary from '../components/SelectedPlacesSummary'
 
 /**
  * VerifyPage — review and curate itinerary options before finalising.
@@ -55,13 +31,14 @@ export default function VerifyPage() {
   const [actionStatus, setActionStatus] = useState(null) // 'refining' | 'finalizing' | null
   const [confirmModal, setConfirmModal] = useState(null) // { type: 'empty_days', daysStr: string } or { type: 'duration', places: [], calculated: number }
 
-  // Redirect if no planId
+  // ── Guard: redirect to home if planId is missing ──────────────────────────
   useEffect(() => {
     if (!planId) navigate('/')
   }, [planId, navigate])
 
-  // When new options arrive (initial load or after a refine), default-select
-  // all must_see places so users start with a reasonable selection.
+  // ── Sync selection state when a fresh set of options arrives ───────────────
+  // Default-select all must_see places so users start with a reasonable
+  // selection. This runs after the initial load AND after a 'refine' action.
   useEffect(() => {
     if (!itineraryOptions) return
     const mustSeeIds = new Set()
@@ -74,17 +51,18 @@ export default function VerifyPage() {
     setActionStatus(null)
   }, [itineraryOptions])
 
-  // Navigate to /itinerary only once BOTH the finalized itinerary AND the route
-  // are ready. Checking both values (not just status) prevents navigating on a
-  // stale 'routing'/'complete' replay before the finalize pipeline finishes.
+  // ── Navigate to /itinerary once both artefacts are ready ──────────────────
+  // We check both `itinerary` and `route` values (not just `status`) because
+  // a stale 'complete' replay can arrive before the finalize pipeline finishes.
   useEffect(() => {
     if (itinerary && route) {
       navigate(`/itinerary?planId=${planId}`)
     }
   }, [itinerary, route, navigate, planId])
 
-  // If the pipeline errors while we're waiting for finalize/refine, clear the
-  // loading state so the error UI is visible and the user can retry or go back.
+  // ── Clear loading state on pipeline error ─────────────────────────────────
+  // If the pipeline errors while waiting for finalize/refine, clear the loading
+  // state so the error UI is visible and the user can retry or go back.
   useEffect(() => {
     if (status === 'error') {
       setActionStatus(null)
@@ -92,8 +70,10 @@ export default function VerifyPage() {
     }
   }, [status])
 
-  // Safety timeout — if we've been finalizing for more than 90 seconds without
-  // the route arriving, something went wrong server-side. Clear the stuck state.
+  // ── Safety timeout: auto-clear stuck finalizing state ────────────────────
+  // If we've been finalizing for more than 90 seconds without the route
+  // arriving, something went wrong server-side. Clear the stuck state so the
+  // user can try again rather than staring at a spinner indefinitely.
   useEffect(() => {
     if (actionStatus !== 'finalizing') return
     const timer = setTimeout(() => {
@@ -228,6 +208,17 @@ export default function VerifyPage() {
   const personaType = persona?.type ?? ''
   const duration = persona?.duration ?? ''
 
+  // Build a map of place_id to name for the summary list
+  const placeNames = useMemo(() => {
+    const map = new Map()
+    for (const day of itineraryOptions?.days ?? []) {
+      for (const place of day.options ?? []) {
+        map.set(place.place_id, place.name)
+      }
+    }
+    return map
+  }, [itineraryOptions])
+
   return (
     <div className="min-h-screen bg-surface text-on-surface antialiased pb-56">
 
@@ -345,8 +336,9 @@ export default function VerifyPage() {
 
                         {/* Card */}
                         <div
+                          id={`place-card-${place.place_id}`}
                           className={[
-                            'rounded-2xl overflow-hidden border transition-all duration-300',
+                            'place-card-inner rounded-2xl overflow-hidden border transition-all duration-300',
                             isConfirmed
                               ? 'border-outline-variant/30 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-raised)] hover:-translate-y-1 bg-surface-white'
                               : 'border-outline-variant/20 bg-surface-white',
@@ -466,7 +458,16 @@ export default function VerifyPage() {
         )}
       </main>
 
-      {/* ── Floating bottom bar: Refine textarea + Finalize button ── */}
+      {/* ── Fixed Selected Places Summary (Desktop only) ── */}
+      {!isLoading && (
+        <SelectedPlacesSummary 
+          confirmed={confirmed} 
+          placeNames={placeNames} 
+          onRemoveAll={() => setConfirmed(new Set())} 
+        />
+      )}
+
+      {/* ── Floating bottom bar: refine textarea + finalize CTA ── */}
       <div className="fixed bottom-0 left-0 w-full p-4 md:p-8 bg-gradient-to-t from-surface via-surface/90 to-transparent z-50 flex flex-col items-center pointer-events-none">
 
         {/* Refine textarea */}

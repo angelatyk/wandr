@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,7 @@ from ai.models.input_limits import (
     SHORT_TEXT_MAX,
 )
 
+# Named aliases keep field definitions DRY while enforcing length caps at the API boundary.
 FreeText = Annotated[str, Field(max_length=FREE_TEXT_MAX)]
 LocationText = Annotated[str, Field(max_length=LOCATION_TEXT_MAX)]
 ShortText = Annotated[str, Field(max_length=SHORT_TEXT_MAX)]
@@ -17,12 +18,12 @@ PlaceId = Annotated[str, Field(max_length=PLACE_ID_MAX)]
 
 
 class TripRequest(BaseModel):
-    vibe: Optional[FreeText] = None
-    destination: Optional[LocationText] = None
-    current_location: Optional[LocationText] = None
-    duration: Optional[ShortText] = None
-    persona_type: Optional[ShortText] = None
-    transit_preference: Optional[ShortText] = None
+    vibe: FreeText | None = None
+    destination: LocationText | None = None
+    current_location: LocationText | None = None
+    duration: ShortText | None = None
+    persona_type: ShortText | None = None
+    transit_preference: ShortText | None = None
 
 
 class SelectRequest(TripRequest):
@@ -35,5 +36,5 @@ class SelectRequest(TripRequest):
     """
 
     confirmed_place_ids: list[PlaceId] = Field(default_factory=list, max_length=MAX_CONFIRMED_PLACES)
-    refinement_text: Optional[FreeText] = None
+    refinement_text: FreeText | None = None
     action: str = "refine"  # "refine" | "finalize"

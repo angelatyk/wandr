@@ -1,6 +1,7 @@
-from typing import List, Literal
+from typing import Literal
 
 from pydantic import BaseModel
+
 
 class RouteStop(BaseModel):
     place_id: str
@@ -9,12 +10,15 @@ class RouteStop(BaseModel):
     lat: float
     lng: float
     place_source: Literal["api", "mock", "unknown"] = "api"
-    # "api"      — travel time from Google Directions API
-    # "mock"     — travel time from mock data
-    # "overnight"— cross-day leg (first stop of Day N+1 relative to last of Day N)
-    # "none"     — first stop in sequence, no prior stop to measure from
+    # travel_source discriminates how travel_time_from_prev_min was obtained:
+    #   "api"       — real leg duration from Google Directions
+    #   "mock"      — synthetic value when Directions API is not configured
+    #   "overnight" — cross-day leg; UI shows this as "N min to tomorrow's first stop"
+    #   "none"      — first stop in sequence; no previous stop to measure from
     travel_source: Literal["api", "mock", "overnight", "none"] = "none"
+    travel_mode: Literal["driving", "transit", "walking", "none", "unknown"] = "unknown"
+
 
 class RouteModel(BaseModel):
-    stops: List[RouteStop]
+    stops: list[RouteStop]
     total_travel_min: int

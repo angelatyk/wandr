@@ -1,6 +1,7 @@
-from typing import List, Literal
+from typing import Literal
 
 from pydantic import BaseModel
+
 
 class AudioScript(BaseModel):
     place_id: str
@@ -11,5 +12,6 @@ class AudioScript(BaseModel):
     tts_attempted: bool = False
     audio_source: Literal["inline", "signed_url", "stored", "text_only"] = "text_only"
 
+
 class AudioScriptsModel(BaseModel):
-    scripts: List[AudioScript]
+    scripts: list[AudioScript]

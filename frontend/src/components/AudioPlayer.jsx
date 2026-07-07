@@ -8,7 +8,25 @@ function formatTime(seconds) {
 }
 
 /**
- * AudioPlayer — plays real narration MP3 from the backend TTS pipeline.
+ * AudioPlayer — a bottom-bar audio player for stop narrations.
+ *
+ * Plays the TTS-generated narration MP3 that the backend pipeline produces
+ * for each itinerary stop. Supports play/pause, ±10-second seek, a click-to-
+ * seek progress bar, and a close button.
+ *
+ * Autoplay is attempted when a new `audioUrl` is supplied. If the browser
+ * blocks autoplay (common on mobile without a prior gesture), the player
+ * falls back gracefully — the user can tap play manually.
+ *
+ * Error handling probes the URL with a HEAD request to distinguish between
+ * a 404 (audio was never saved) and a generic network/decode failure, so we
+ * can surface a more actionable message to the user.
+ *
+ * @param {object}      props
+ * @param {string}      props.title    — Display title shown in the player (e.g. "Senso-ji — Narration")
+ * @param {string|null} props.image    — Thumbnail URL; falls back to a headphones icon if null
+ * @param {string}      props.audioUrl — URL of the audio file (GCS signed URL or data: URI)
+ * @param {function}    props.onClose  — Called when the user clicks the close button
  */
 export default function AudioPlayer({ title, image, audioUrl, onClose }) {
   const audioRef = useRef(null)
@@ -23,6 +41,7 @@ export default function AudioPlayer({ title, image, audioUrl, onClose }) {
     const audio = audioRef.current
     if (!audio || !audioUrl) return
 
+    // Reset all playback state so the UI is clean for the new track
     setError(null)
     setLoading(true)
     setPlaying(false)
@@ -34,6 +53,10 @@ export default function AudioPlayer({ title, image, audioUrl, onClose }) {
     audio.load()
 
     const tryAutoplay = () => {
+      // audio.play() returns a Promise. Autoplay is blocked in most browsers
+      // when there has been no prior user gesture on the page. We catch the
+      // rejection silently so the player renders in a paused state instead
+      // of throwing an unhandled rejection into the console.
       audio.play().then(() => {
         setPlaying(true)
       }).catch(() => {
@@ -49,6 +72,8 @@ export default function AudioPlayer({ title, image, audioUrl, onClose }) {
     }
   }, [audioUrl])
 
+  // useCallback prevents these stable handlers from being recreated on every
+  // render, which would cause the <audio> element to re-attach them needlessly.
   const handleTimeUpdate = useCallback(() => {
     const audio = audioRef.current
     if (!audio || !audio.duration) return
@@ -77,6 +102,9 @@ export default function AudioPlayer({ title, image, audioUrl, onClose }) {
       return
     }
 
+    // Probe the URL with a HEAD request to give a more actionable error message.
+    // A 404 means the TTS pipeline never saved the file; anything else is a
+    // network or decoding issue on the client side.
     try {
       const res = await fetch(audioUrl, { method: 'HEAD' })
       if (res.status === 404) {

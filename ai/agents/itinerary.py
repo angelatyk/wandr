@@ -66,6 +66,8 @@ and do not change a place_id.
 
 IMPORTANT: For multi-day trips, group places geographically by day (cluster them into regions) to minimize driving distances and prevent zig-zagging between distant areas. Day 1 should start in the region closest to the user's Current Location.
 
+STARTING POINT RULE: If a Current Location is provided, you MUST include a candidate representing the starting point (e.g. the Current Location) as the very first option on Day 1. If the user's Refinement Request explicitly changes the starting point (e.g., "start in Buffalo"), use that instead. Make sure to mark this starting point option with `"must_see": true`.
+
 CORRIDOR RULE (only applies when Current Location is provided and is different from Destination): Every stop you include must be geographically plausible along the travel route from the Current Location to the Destination. Do NOT include stops that are in an unrelated region or require significant backtracking in the wrong direction. If a candidate from the list is clearly off-route, skip it and use another candidate instead. When no Current Location is given, this rule does not apply — simply select the best candidates within or near the Destination.
 
 Output ONLY a raw JSON object (no markdown fences, no commentary) that matches
@@ -732,15 +734,42 @@ class ItineraryAgent(BaseAgent):
         corridor_dest: tuple[float, float] | None = None
 
         if current_location:
+            # 1. Add candidates "on the way" if current location is different from destination
+            if destination and current_location.lower() != destination.lower():
+                route_query = f"best places to stop between {current_location} and {destination}"
+                try:
+                    route_hits = await places_search(
+                        destination=destination,
+                        persona_type=persona_type,
+                        limit=10,
+                        explicit_query=route_query,
+                    )
+                    existing_ids = {c.place_id for c in search_candidates}
+                    for candidate in route_hits:
+                        if candidate.place_id not in existing_ids:
+                            search_candidates.append(candidate)
+                            existing_ids.add(candidate.place_id)
+                except Exception as exc:
+                    logger.warning("Route candidates search failed for %r: %s", route_query, exc)
+
+            # 2. Add the origin itself so the LLM can use it as the starting point
             try:
                 origin_hits = await places_search(
                     destination=current_location,
                     persona_type=persona_type,
                     limit=1,
+                    explicit_query=current_location,
                 )
-                if origin_hits and origin_hits[0].lat is not None and origin_hits[0].lng is not None:
-                    corridor_origin = (origin_hits[0].lat, origin_hits[0].lng)
-                    logger.info("Corridor origin resolved: %s → %s", current_location, corridor_origin)
+                if origin_hits:
+                    origin_candidate = origin_hits[0]
+                    existing_ids = {c.place_id for c in search_candidates}
+                    if origin_candidate.place_id not in existing_ids:
+                        # Insert at the beginning so the LLM sees it early
+                        search_candidates.insert(0, origin_candidate)
+
+                    if origin_candidate.lat is not None and origin_candidate.lng is not None:
+                        corridor_origin = (origin_candidate.lat, origin_candidate.lng)
+                        logger.info("Corridor origin resolved: %s → %s", current_location, corridor_origin)
                 else:
                     logger.warning("Could not geocode current_location=%r for corridor filter.", current_location)
             except Exception as exc:

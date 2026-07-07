@@ -1,3 +1,10 @@
+"""Google Maps / Places API client.
+
+All HTTP calls run via asyncio.to_thread so the event loop is never blocked.
+Mock detection is centralized here — callers don't need to know which env var
+pattern signals a non-configured key.
+"""
+
 import asyncio
 import json
 import logging
@@ -135,8 +142,6 @@ def _build_search_result(
         lng=lng,
         source=source,
     )
-
-
 
 
 
@@ -293,16 +298,19 @@ async def autocomplete_places(query: str, limit: int = 5) -> list[str]:
     return suggestions
 
 
-async def places_search(destination: str, persona_type: str, limit: int = 5, explicit_query: str | None = None) -> list[PlaceSearchResult]:
+async def places_search(
+    destination: str,
+    persona_type: str,
+    limit: int = 5,
+    explicit_query: str | None = None,
+) -> list[PlaceSearchResult]:
+    """Fetch factual place candidates for itinerary planning."""
     if _uses_mock_places():
         logger.warning("Skipping place search because GOOGLE_PLACES_API_KEY is not configured.")
         return []
 
-    """Fetch factual place candidates for itinerary planning."""
     if not destination or not destination.strip():
         raise PlaceNotFoundError("destination is required")
-
-
 
     unique_places: dict[str, PlaceSearchResult] = {}
     try:
@@ -356,19 +364,14 @@ async def places_search(destination: str, persona_type: str, limit: int = 5, exp
 
 
 async def get_place_details(place_id: str) -> PlaceDetails:
+    """Fetch opening hours, rating, editorial summary, and types for a place."""
     if _uses_mock_places():
         raise MapsAPIError("GOOGLE_PLACES_API_KEY is not configured")
 
-    """Fetch opening hours, rating, editorial summary, and types for a place."""
     if not place_id or not place_id.strip():
         raise PlaceNotFoundError("place_id is required")
 
-
-
-    try:
-        payload = await _fetch_place_details(place_id)
-    except MapsAPIError as exc:
-        raise
+    payload = await _fetch_place_details(place_id)
 
     if not payload:
         raise PlaceNotFoundError(f"No place found for place_id={place_id}")

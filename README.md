@@ -96,6 +96,8 @@ Navigate to `http://localhost:5173` (or the port Vite provides) to start plannin
 
 ### System Flow
 
+![System Flow](plan/system_flow.png)
+
 ```text
 User prompt
     ↓

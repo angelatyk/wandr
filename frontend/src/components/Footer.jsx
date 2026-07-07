@@ -1,6 +1,9 @@
 /**
- * Footer — shown on the home page and other marketing screens.
- * Simple three-column layout: brand, copyright, legal links.
+ * Footer — shown on the home page and marketing-style screens.
+ *
+ * Three-column layout: Wandr brand wordmark, copyright line, legal links.
+ * The legal links currently point to `#` as placeholders — wire them up
+ * when real policy pages are available.
  */
 export default function Footer() {
   return (

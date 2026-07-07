@@ -5,7 +5,14 @@ import TopNav from "../components/TopNav";
 import Footer from "../components/Footer";
 import PersonaGrid from "../components/PersonaGrid";
 import LocationAutocomplete from "../components/LocationAutocomplete";
-import { PERSONAS } from "../data/mockItinerary";
+import { PERSONAS } from "../data/personas";
+
+// Duration strings from the user can be free-form (e.g. "3 days", "2 hours",
+// "Aug 12–14"). This pattern accepts any string that contains a number OR one
+// of the common time/calendar words. The backend profiler does the real parsing;
+// this is just a first-pass sanity check to avoid obviously bad input.
+const DURATION_PATTERN =
+  /\d|hour|day|week|month|weekend|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/
 
 // Dynamically import all images in src/assets starting with 'hero-bg'
 const globImages = import.meta.glob("../assets/hero-bg*.{png,jpg,jpeg,webp}", {
@@ -54,6 +61,10 @@ export default function HomePage() {
     setTransitPreference("");
   };
 
+  /**
+   * Hero background image slideshow — cycles through all hero-bg* assets
+   * in src/assets/ every 6 seconds for a cinematic effect.
+   */
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentBgIndex((prev) => (prev + 1) % HERO_IMAGES.length);
@@ -61,6 +72,15 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
+  /**
+   * handleQuickWander — submits the trip-planning form to POST /api/plan.
+   *
+   * Accepts two mutually exclusive input modes:
+   *  - Vibe mode: a free-text description of the trip
+   *  - Structured mode: destination + duration + optional fields
+   *
+   * On success, navigates to /refine?planId=<uuid> so the SSE stream can begin.
+   */
   const handleQuickWander = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
 
@@ -77,12 +97,7 @@ export default function HomePage() {
     if (duration.trim()) {
       const dur = duration.trim().toLowerCase();
       // Basic check: must contain a number, or common time/date words
-      const looksLikeTime =
-        /\d/.test(dur) ||
-        /hour|day|week|month|weekend|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/.test(
-          dur,
-        );
-      if (!looksLikeTime) {
+      if (!DURATION_PATTERN.test(dur)) {
         alert(
           "Please enter a clearer duration or date range (e.g., '3 days', 'weekend', 'Aug 1-5').",
         );

@@ -1,6 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { LOCATION_TEXT_MAX } from '../constants/inputLimits'
 
+/**
+ * LocationAutocomplete — a text input with a debounced Places autocomplete dropdown.
+ *
+ * Fetches suggestions from GET /api/places/autocomplete?query=<value> with a
+ * 300ms debounce so we don't hammer the API on every keystroke.
+ *
+ * @param {object}   props
+ * @param {string}   props.id          — HTML id for the <input> element
+ * @param {string}   props.value       — controlled value
+ * @param {function} props.onChange    — (value: string) => void, called on change and on selection
+ * @param {string}   props.placeholder — input placeholder text
+ * @param {string}   [props.icon]      — Material Symbol name for the leading icon (default: 'location_on')
+ */
 export default function LocationAutocomplete({ 
   id, 
   value, 
@@ -20,7 +33,7 @@ export default function LocationAutocomplete({
       return
     }
 
-    // Debounce the API call by 300ms
+    // Debounce the API call by 300ms to avoid hammering Places on every keystroke
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
 
     timeoutRef.current = setTimeout(async () => {
@@ -39,6 +52,13 @@ export default function LocationAutocomplete({
     return () => clearTimeout(timeoutRef.current)
   }, [value])
 
+  const handleBlur = () => {
+    // Delay hiding the dropdown so that a mousedown on an option fires first.
+    // Without this timeout, onBlur fires before onMouseDown and the dropdown
+    // disappears before the click is registered, dropping the selection.
+    setTimeout(() => setShowOptions(false), 150)
+  }
+
   return (
     <div className="relative flex-1 flex items-center bg-surface-white/70 rounded-xl px-3 border border-transparent focus-within:border-outline-variant transition-colors min-w-0">
       <span className="material-symbols-outlined text-outline ml-2 flex-shrink-0 text-[20px]">
@@ -52,7 +72,7 @@ export default function LocationAutocomplete({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setShowOptions(true)}
-        onBlur={() => setShowOptions(false)}
+        onBlur={handleBlur}
         autoComplete="off"
         className="w-full bg-transparent border-none focus:outline-none text-base text-on-surface placeholder:text-outline py-3 px-3"
         style={{ fontFamily: 'var(--font-body)' }}
@@ -72,6 +92,8 @@ export default function LocationAutocomplete({
               className="px-5 py-3 hover:bg-secondary/10 hover:text-secondary cursor-pointer text-sm text-on-surface transition-colors truncate"
               style={{ fontFamily: 'var(--font-body)' }}
               onMouseDown={(e) => {
+                // Use onMouseDown (not onClick) so the selection fires before
+                // the input's onBlur dismisses the dropdown.
                 e.preventDefault()
                 onChange(opt)
                 setShowOptions(false)

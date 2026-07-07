@@ -1,14 +1,26 @@
+"""FastAPI server — HTTP and SSE endpoints for the Wandr trip-planning pipeline.
+
+Architecture notes:
+- One InMemorySessionService is shared for the lifetime of the process.  On
+  serverless restarts the session is rebuilt from the on-disk plan snapshot.
+- Each /api/plan run launches an asyncio.Task that streams PipelineEvents into
+  a per-plan asyncio.Queue; the /api/plan/{id}/stream SSE endpoint drains that
+  queue and forwards events to the browser.
+- Rate limiting and concurrency caps are enforced at request ingress; see
+  ai/api/rate_limit.py for the in-process implementation.
+"""
+
 import asyncio
 import base64
 import json
 import logging
 from urllib.parse import quote
 from uuid import uuid4
-from typing import Dict, Set
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from google.adk.events import Event as _ADKEvent, EventActions as _ADKEventActions
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai.types import Content, Part
@@ -50,7 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pipeline_queues: Dict[str, asyncio.Queue] = {}
+pipeline_queues: dict[str, asyncio.Queue] = {}
 session_service = InMemorySessionService()
 
 
@@ -178,13 +190,11 @@ async def _ensure_plan_session(plan_id: str) -> dict:
     if session is None:
         return snapshot.state
 
-    from google.adk.events import Event, EventActions
-
     await session_service.append_event(
         session=session,
-        event=Event(
+        event=_ADKEvent(
             author="system",
-            actions=EventActions(state_delta=snapshot.state),
+            actions=_ADKEventActions(state_delta=snapshot.state),
         ),
     )
     refreshed = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
@@ -217,13 +227,12 @@ async def _clear_pipeline_error(plan_id: str) -> None:
     session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
     if session is None or session.state.get("pipeline_error") is None:
         return
-    from google.adk.events import Event, EventActions
 
     await session_service.append_event(
         session=session,
-        event=Event(
+        event=_ADKEvent(
             author="system",
-            actions=EventActions(state_delta={"pipeline_error": None}),
+            actions=_ADKEventActions(state_delta={"pipeline_error": None}),
         ),
     )
 
@@ -233,13 +242,12 @@ async def _persist_pipeline_error(plan_id: str, message: str) -> None:
     session = await session_service.get_session(app_name=APP_NAME, user_id="user", session_id=plan_id)
     if session is None:
         return
-    from google.adk.events import Event, EventActions
 
     await session_service.append_event(
         session=session,
-        event=Event(
+        event=_ADKEvent(
             author="system",
-            actions=EventActions(state_delta={"pipeline_error": {"message": message}}),
+            actions=_ADKEventActions(state_delta={"pipeline_error": {"message": message}}),
         ),
     )
 
@@ -296,7 +304,7 @@ async def run_pipeline(
         user_message = Content(role="user", parts=[Part(text=initial_text)])
 
         progress = 10
-        emitted_phases: Set[str] = set()
+        emitted_phases: set[str] = set()
 
         async for event in runner.run_async(
             user_id="user",
@@ -489,12 +497,11 @@ async def reply_plan(plan_id: str, request: TripRequest, http_request: Request):
                       "itinerary_options", "itinerary_options_confirmed", "itinerary_refinement_text")
         stale_state = {k: None for k in stale_keys if current_session.state.get(k) is not None}
         if stale_state:
-            from google.adk.events import Event as _Event, EventActions as _EventActions
             await session_service.append_event(
                 session=current_session,
-                event=_Event(
+                event=_ADKEvent(
                     author="system",
-                    actions=_EventActions(state_delta=stale_state),
+                    actions=_ADKEventActions(state_delta=stale_state),
                 ),
             )
             logger.info(
@@ -603,10 +610,9 @@ async def select_places(plan_id: str, body: SelectRequest, http_request: Request
     # the stale itinerary_options so the pipeline doesn't immediately replay them.
     # We also MUST clear itinerary, route, and audio_scripts so that if the user
     # went "Back" from a finalized plan to refine again, the agents don't skip themselves.
-    from google.adk.events import Event, EventActions
-    update_event = Event(
+    update_event = _ADKEvent(
         author="system",
-        actions=EventActions(
+        actions=_ADKEventActions(
             state_delta={
                 "itinerary_options_confirmed": confirmed_places,
                 "itinerary_refinement_text": body.refinement_text,
@@ -617,11 +623,11 @@ async def select_places(plan_id: str, body: SelectRequest, http_request: Request
                 "route": None,
                 "audio_scripts": None,
             }
-        )
+        ),
     )
     await session_service.append_event(
         session=current_session,
-        event=update_event
+        event=update_event,
     )
     await _snapshot_session_state(plan_id)
 

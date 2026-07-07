@@ -1,3 +1,10 @@
+"""Fan-out pipeline that runs Stop Research → Narrator for every itinerary stop.
+
+Each stop is processed independently and in parallel via asyncio.gather.
+Failures are caught per-stop and produce a fallback AudioScript with an empty
+audio_url so the rest of the itinerary is not blocked.
+"""
+
 import asyncio
 import logging
 

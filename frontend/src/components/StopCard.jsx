@@ -44,18 +44,25 @@ function StopImage({ src, alt, className }) {
 }
 
 /**
- * StopCard — a single itinerary stop displayed in the timeline.
+ * StopCard — a single itinerary stop card used in the timeline.
  *
- * Used on both the Verify page (with a keep/remove toggle)
- * and the Itinerary page (with a play button).
+ * Supports two layout variants controlled by the `variant` prop:
  *
- * Props:
- *   stop         — stop data object from mockItinerary
- *   variant      — 'verify' | 'itinerary'
- *   included     — controlled toggle state (verify variant)
- *   onToggle     — () => void (verify variant)
- *   onPlay       — () => void (itinerary variant)
- *   active       — boolean, highlights the card when its audio is playing
+ *  - 'itinerary' (default): vertical card with a play button for audio narration.
+ *    Actively used by ItineraryPage inside the scrollable timeline.
+ *
+ *  - 'verify': horizontal card with a keep/remove toggle.
+ *    This variant is available for future use; VerifyPage currently renders
+ *    its own inline card markup for finer control over the confirm flow.
+ *
+ * @param {object}   props
+ * @param {object}   props.stop          — stop data object (name, image, description, etc.)
+ * @param {string}   [props.variant]     — 'itinerary' | 'verify' (default: 'itinerary')
+ * @param {boolean}  [props.included]    — verify variant: whether the stop is toggled on
+ * @param {function} [props.onToggle]    — verify variant: called when the toggle changes
+ * @param {function} [props.onPlay]      — itinerary variant: called when the play button is clicked
+ * @param {boolean}  [props.active]      — itinerary variant: highlights the card when its audio is playing
+ * @param {function} [props.onViewMap]   — itinerary variant: scrolls the map to this stop
  */
 export default function StopCard({ stop, variant = 'itinerary', included = true, onToggle, onPlay, active = false, onViewMap }) {
   const isVerify = variant === 'verify'
@@ -74,7 +81,7 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
       ].join(' ')}
     >
       {isVerify ? (
-        /* ── Verify layout: horizontal card ── */
+        /* ── Verify layout: horizontal card with image left, content right ── */
         <div className="flex flex-col md:flex-row">
           {/* Image */}
           <div className="w-full md:w-1/3 h-48 md:h-auto relative flex-shrink-0">
@@ -148,7 +155,7 @@ export default function StopCard({ stop, variant = 'itinerary', included = true,
           </div>
         </div>
       ) : (
-        /* ── Itinerary layout: vertical card ── */
+        /* ── Itinerary layout: vertical card with full-width image and play button ── */
         <>
           {/* Image */}
           <div className="relative w-full h-48">

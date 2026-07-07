@@ -3,9 +3,27 @@ import { useState, useEffect, useRef } from 'react'
 /**
  * usePlanStream — subscribes to the backend SSE stream for a given plan.
  *
- * Returns live state that updates as pipeline events arrive.
- * The EventSource is closed (and re-opened on action) when an
- * itinerary_options or complete event arrives.
+ * Opens an EventSource on `/api/plan/:planId/stream` and parses the JSON
+ * events that the FastAPI pipeline emits. State fields are updated as each
+ * event type arrives so components can render incrementally.
+ *
+ * The stream is deliberately paused (server closes it) after `itinerary_options`
+ * so the user can review and select stops. Callers re-open it by calling the
+ * returned `reconnect()` function after POSTing to `/api/plan/:id/select`.
+ *
+ * @param {string|null} planId — UUID from the URL search param `?planId=`
+ * @returns {object}
+ *   @returns {object[]}     stops           — AudioScript records that arrive via `stop_done` events
+ *   @returns {number}       progress        — 0–100 progress value from the latest event
+ *   @returns {string}       status          — pipeline phase: 'initializing' | 'planning' | 'needs_clarification' |
+ *                                             'awaiting_selection' | 'finalised' | 'routing' | 'complete' | 'error'
+ *   @returns {string|null}  errorMessage    — human-readable error; non-null when status === 'error'
+ *   @returns {string|null}  clarification   — question text from the profiler; non-null when status === 'needs_clarification'
+ *   @returns {object|null}  itineraryOptions — ItineraryOptionsModel payload from the `itinerary_options` event
+ *   @returns {object|null}  itinerary       — ItineraryModel payload from the `itinerary_done` event
+ *   @returns {object|null}  route           — RouteModel payload from the `logistics_done` event
+ *   @returns {object|null}  persona         — PersonaModel payload from the `profiler_done` event
+ *   @returns {function}     reconnect       — Imperative fn to re-open the stream (call after finalize/refine POST)
  */
 export function usePlanStream(planId) {
   const [stops, setStops] = useState([])
@@ -18,8 +36,11 @@ export function usePlanStream(planId) {
   const [route, setRoute] = useState(null)
   const [persona, setPersona] = useState(null)
 
-  // Expose an imperative "reconnect" so VerifyPage can re-open the stream
-  // after sending a refine or finalize action.
+  // gracefulCloseRef tracks whether the stream was intentionally closed by us
+  // (e.g. after an itinerary_options event) vs. lost unexpectedly. We use a
+  // ref instead of state because it must be readable inside the onerror handler
+  // synchronously, without a stale closure. A state update would only be
+  // visible to the *next* render, too late for the onerror check.
   const reconnectRef = useRef(null)
   const gracefulCloseRef = useRef(false)
 

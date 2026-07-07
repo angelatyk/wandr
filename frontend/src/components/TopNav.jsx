@@ -1,10 +1,18 @@
 import { Link, useLocation } from 'react-router-dom'
 
+/**
+ * NAV_LINKS — desktop top-bar navigation items.
+ * Add entries here to extend the primary navigation without editing JSX.
+ */
 const NAV_LINKS = [
   { label: 'Explore', to: '/' },
   { label: 'My Trips', to: '/trips' },
 ]
 
+/**
+ * MOBILE_NAV — bottom-bar navigation shown on mobile viewports.
+ * 'Profile' uses `to: '#'` as a placeholder until account pages are built.
+ */
 const MOBILE_NAV = [
   { label: 'Discover', icon: 'explore', to: '/' },
   { label: 'Planner', icon: 'map', to: '/refine' },
@@ -14,7 +22,13 @@ const MOBILE_NAV = [
 
 /**
  * TopNav — fixed header shown on all primary screens.
- * Collapses to a mobile bottom bar on small viewports.
+ *
+ * Renders two navigation bars depending on viewport width:
+ *   - Desktop (md+): top bar with logo, nav links, and icon actions.
+ *   - Mobile (<md):  bottom bar tabs using the MOBILE_NAV config.
+ *
+ * The active route is highlighted using `useLocation` so the bar always
+ * reflects the current page without manual prop threading.
  */
 export default function TopNav() {
   const { pathname } = useLocation()
@@ -87,6 +101,9 @@ export default function TopNav() {
             >
               <span
                 className="material-symbols-outlined text-[22px]"
+                // fontVariationSettings toggles the Material Symbols FILL axis.
+                // FILL=1 renders the solid/filled variant; FILL=0 renders the outline.
+                // This avoids loading two separate icon fonts.
                 style={{ fontVariationSettings: active ? "'FILL' 1" : "'FILL' 0" }}
               >
                 {icon}
