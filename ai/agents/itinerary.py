@@ -137,6 +137,12 @@ def _build_refinement_section(text: str | None) -> str:
         return "No refinement requested — generate options normally."
     return (
         f'The user wants to refine the itinerary: "{text}". Incorporate this into your options.\n\n'
+        'IMPORTANT RULE ON OPTIONS COUNT: Your BASE TARGET for options is defined below in the Duration rules. '
+        'HOWEVER, if the user requested specific new places here, you MUST expand your output size! '
+        'For EVERY distinct new place the user explicitly asked for, you must increase your total output count by 1 '
+        '(i.e. if base target is 6 and they asked for 2 places, output exactly 8 options). '
+        'For each requested place, pick ONLY the single BEST, most suited candidate match from the list '
+        '(do NOT include duplicate parking lots, team stores, etc.).\n\n'
         'IMPORTANT: If the user\'s Refinement Request is completely unrelated to traveling, exploring, or planning '
         '(e.g., asking for a recipe, coding help, or random facts), you MUST output exactly: DENY_NON_TRAVEL'
     )
@@ -177,14 +183,14 @@ def _build_duration_rules(parsed: ParsedDuration, confirmed_count: int = 0) -> s
         lines.extend(
             [
                 "- This is a single-outing / hour-scale trip: put ALL options on day 1 only.",
-                f"- Suggest up to {max_options} place options total. Provide plenty of options for the user to choose from; the total time of all options combined CAN exceed the specified duration because the user will curate a subset.",
+                f"- BASE TARGET: Suggest {max_options} place options total (excluding explicit refinements).",
                 f"- When finalising, include at most {max_stops} stops on day 1.",
                 "- Do NOT spread a 7-hour walk into multiple days.",
             ]
         )
     else:
         lines.append(
-            f"- Distribute options across the {parsed.day_count} day(s); ~{max_options} options per day max. Provide plenty of options; the total time can exceed the duration because the user curates it."
+            f"- BASE TARGET: Distribute options across the {parsed.day_count} day(s); ~{max_options} options per day (excluding explicit refinements)."
         )
     return "\n".join(lines)
 
@@ -380,10 +386,9 @@ def _enforce_day_structure(
                     continue
                 merged.append(option)
                 seen.add(option.place_id)
-        cap = max_options_per_day(parsed, 1, confirmed_count)
         return ItineraryOptionsModel(
             destination=options.destination,
-            days=[DayOptionsModel(day=1, options=merged[:cap])],
+            days=[DayOptionsModel(day=1, options=merged)],
         )
 
     by_day: dict[int, list[PlaceOptionModel]] = {day: [] for day in range(1, day_count + 1)}
@@ -396,9 +401,8 @@ def _enforce_day_structure(
             by_day[target].append(option)
             seen.add(option.place_id)
 
-    cap = max_options_per_day(parsed, day_count, confirmed_count)
     days = [
-        DayOptionsModel(day=day, options=by_day[day][:cap])
+        DayOptionsModel(day=day, options=by_day[day])
         for day in range(1, day_count + 1)
         if by_day[day]
     ]
@@ -715,7 +719,7 @@ class ItineraryAgent(BaseAgent):
             refinement_candidates = await places_search(
                 destination=destination,
                 persona_type=persona_type,
-                limit=3,
+                limit=20,
                 explicit_query=f"{refinement_text} in {destination}"
             )
             existing_ids = {c.place_id for c in search_candidates}
@@ -904,7 +908,12 @@ class ItineraryAgent(BaseAgent):
                     corridor_origin=corridor_origin,
                     corridor_dest=corridor_dest,
                 )
-            options = _enforce_day_structure(options, day_count, parsed)
+            options = _enforce_day_structure(
+                options, 
+                day_count, 
+                parsed, 
+                confirmed_count=len(confirmed),
+            )
 
             # Log every option for dataflow visibility during development.
             logger.info("Options generated for '%s' (%d days):", options.destination, len(options.days))
